@@ -55,7 +55,7 @@ class LSamProcessor:
     """
     
     @staticmethod
-    def process_lsam_result(target_region, index, server_ip="172.16.1.61", server_port=5002):
+    def process_lsam_result(target_region, index, server_ip="47.108.251.163", server_port=5000):
         """
         处理LSam服务器的分割结果
         
@@ -121,10 +121,12 @@ class Target3DModeler:
         # 确保坐标是整数
         x_pixel = round(pixel_coord[0])
         y_pixel = round(pixel_coord[1])
+        with open('/home/uav/lab/muav/depth.txt', 'a') as f:
+            f.write(str(f"input:{x_pixel}, {y_pixel}, {depth}\n"))
+        x = ((x_pixel - self.camera_params['cx']) * depth / self.camera_params['fx']) 
+        y = ((y_pixel - self.camera_params['cy']) * depth / self.camera_params['fy'])
+        z = depth
         
-        x = ((x_pixel - self.camera_params['cx']) * depth / self.camera_params['fx']) * 0.001
-        y = ((y_pixel - self.camera_params['cy']) * depth / self.camera_params['fy']) * 0.001
-        z = depth * 0.001
         return [round(float(x), precision), round(float(y), precision), round(float(z), precision)]
     
     def calculate_average_depth(self, obj_data, depth_data):
@@ -271,7 +273,6 @@ class Target3DModeler:
         
         # 计算平均深度
         depth = self.calculate_average_depth(obj_data, depth_data)
-        
         # 使用通用函数计算质心3D坐标（XYZ正向：右下前）
         # mass_center = self.calculate_3d_position(obj_data['mass_center'], depth)
         
@@ -283,13 +284,22 @@ class Target3DModeler:
             self.calculate_3d_position([obj_data['bbox'][0][0], obj_data['bbox'][1][1]], depth),  # 左下前角点
             self.calculate_3d_position(obj_data['bbox'][1], depth)  # 右下前角点
         ]
+        # with open('/home/uav/lab/muav/depth.txt', 'w') as f:
+        #     f.write(str(corners))
         # 计算四个角点所在的球体球心，半径为最大边长的一半
         max_length = max(
             self.calculate_distance(corners[0], corners[3]),
             self.calculate_distance(corners[1], corners[2])
         )*0.55
-
-        obj3d['center'] = self.calculate_sphere_centers(corners, max_length)
+        center = self.calculate_sphere_centers(corners, max_length)
+        if center == []:
+            center = corners[0]
+            center[0] = (corners[0][0] + corners[1][0] + corners[2][0] + corners[3][0]) / 4
+            center[1] = (corners[0][1] + corners[1][1] + corners[2][1] + corners[3][1]) / 4
+            center[2] = (corners[0][2] + corners[1][2] + corners[2][2] + corners[3][2]) / 4
+            center = [round(float(coord), 2) for coord in center]
+            
+        obj3d['center'] = center
         # 向外膨胀0.3m
         obj3d['safety_radius'] = round(max_length+safe_distance, 2)
         return obj3d

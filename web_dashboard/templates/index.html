@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无人机数据可视化</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>无人机数据实时可视化</h1>
+            <div class="status-bar">
+                <span id="connection-status" class="status">状态: 连接中...</span>
+                <span id="update-time" class="update-time">最后更新: --</span>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- 图像显示区域 -->
+            <div class="image-section">
+                <div class="image-container">
+                    <h2>RGB 图像</h2>
+                    <img id="rgb-image" src="/video_feed/rgb" alt="RGB 图像" class="camera-feed">
+                </div>
+                <div class="image-container">
+                    <h2>深度数据 (彩色可视化)</h2>
+                    <img id="depth-image" src="/video_feed/depth" alt="深度图像" class="camera-feed">
+                </div>
+            </div>
+
+            <!-- 位置姿态信息 -->
+            <div class="data-section">
+                <div class="position-info">
+                    <h2>位置信息</h2>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">X:</span>
+                            <span id="pos-x" class="value">0.00</span>
+                            <span class="unit">m</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Y:</span>
+                            <span id="pos-y" class="value">0.00</span>
+                            <span class="unit">m</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Z:</span>
+                            <span id="pos-z" class="value">0.00</span>
+                            <span class="unit">m</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="orientation-info">
+                    <h2>姿态信息</h2>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">X:</span>
+                            <span id="ori-x" class="value">0.00</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Y:</span>
+                            <span id="ori-y" class="value">0.00</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Z:</span>
+                            <span id="ori-z" class="value">0.00</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">W:</span>
+                            <span id="ori-w" class="value">1.00</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 指令控制区域 -->
+            <div class="command-section">
+                <h2>自然语言控制</h2>
+                <div class="command-container">
+                    <div class="latest-command">
+                        <h3>最新指令</h3>
+                        <p id="latest-command-text">等待指令...</p>
+                    </div>
+                    <div class="command-form">
+                        <input type="text" id="command-input" placeholder="输入控制指令...">
+                        <button id="send-command">发送指令</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

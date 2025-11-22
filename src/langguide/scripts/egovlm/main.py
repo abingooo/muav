@@ -8,9 +8,6 @@ from lib.img_utils import ImageUtils
 from lib.vls import *
 from lib.cloud_utils import PointCloudUtils
 
-for k in ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
-    os.environ.pop(k, None)
-
 if __name__ == '__main__':
     # VLM和LLM初始化
     vlm, llm = initModel()

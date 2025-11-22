@@ -1,0 +1,6 @@
+Capture Timestamp: 20251103_104756
+
+Color Image: color_image.jpg - Saved Successfully
+Depth Image Shape: (480, 640)
+Depth Visualization: depth_image.jpg - Saved Successfully
+Raw Depth Data: depth_image.npy - Saved Successfully

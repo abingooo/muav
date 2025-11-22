@@ -237,7 +237,7 @@ class PointCloudUtils:
             print(f"保存点云到PLY文件时出错: {e}")
             return False
     
-    def depth_to_point_cloud(self, depth_data, rgb_image, fx, fy, cx, cy, depth_scale=0.001):
+    def depth_to_point_cloud(self, depth_data, rgb_image, fx, fy, cx, cy, depth_scale=1):
         """
         从深度图和RGB图像生成3D点云
         
