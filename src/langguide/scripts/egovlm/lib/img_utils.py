@@ -228,7 +228,7 @@ class ImageUtils:
             success = ImageUtils.save_image(visualized, save_path)
             
             if success:
-                print(f"LSAM分割结果可视化: {save_path}")
+                # print(f"LSAM分割结果可视化: {save_path}")
                 return save_path
             else:
                 return None
@@ -308,6 +308,7 @@ class ImageUtils:
         success = ImageUtils.save_image(visualization_image, visualization_path)
         
         if success:
-            print(f"Target2D可视化: {visualization_path}")
+            pass
+            # print(f"Target2D可视化: {visualization_path}")
         
         return visualization_path

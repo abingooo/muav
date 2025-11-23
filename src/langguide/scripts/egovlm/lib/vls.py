@@ -181,7 +181,7 @@ def getPlan(llm, plan_prompt):
     response_text = llm.generate_text(
         prompt=plan_prompt
     )
-    print(response_text)
+    # print(response_text)
     return llm.parse_json_response(response_text)["guidepoints"]
 
 

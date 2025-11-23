@@ -3,7 +3,7 @@
 
 # 导入必要的Python库
 import os
-
+import time
 # 导入图像处理库
 import cv2
 import numpy as np
@@ -48,12 +48,16 @@ class LangGuideNode:
         self.have_depth = False
         self.have_odometry = False
         self.have_cmd = False
+        self.have_plan = False
         self.warned_missing = False
         self.last_color = None
         self.last_depth = None
         self.last_odometry = None
         self.position = None  # 存储位置信息
         self.orientation = None  # 存储姿态四元数信息
+        # 添加位置历史缓冲区，用于计算平均值
+        self.position_history = []
+        self.position_history_size = 10
 
         queue_size = rospy.get_param("~queue_size", 10)
         self.bridge = CvBridge() if CvBridge else None
@@ -161,6 +165,18 @@ class LangGuideNode:
         self.position = msg.pose.pose.position
         # 提取姿态四元数信息
         self.orientation = msg.pose.pose.orientation
+        
+        # 更新位置历史缓冲区
+        position_data = {
+            'x': self.position.x,
+            'y': self.position.y,
+            'z': self.position.z
+        }
+        self.position_history.append(position_data)
+        # 保持缓冲区大小不超过指定值
+        if len(self.position_history) > self.position_history_size:
+            self.position_history.pop(0)
+            
         rospy.logdebug("Received odometry data: pos=(%f, %f, %f), orient=(%f, %f, %f, %f)",
                      self.position.x, self.position.y, self.position.z,
                      self.orientation.x, self.orientation.y, self.orientation.z, self.orientation.w)
@@ -171,6 +187,8 @@ class LangGuideNode:
         """处理语言指令"""
         self.last_lang_cmd = msg
         self.have_cmd = True
+        rospy.loginfo("\n")
+        rospy.loginfo("="*40)
         rospy.loginfo("Received language command: %s", msg.data)
         
         # 调用egovlm的模块函数处理语言指令
@@ -181,13 +199,6 @@ class LangGuideNode:
             egovlm_path = os.path.join(os.path.dirname(__file__), 'egovlm')
             if egovlm_path not in sys.path:
                 sys.path.append(egovlm_path)
-            
-            # 将控制指令保存到commend文件中，供egovlm使用
-            commend_file_path = os.path.join(egovlm_path, 'commend')
-            with open(commend_file_path, 'w') as f:
-                f.write(msg.data)
-            
-            rospy.loginfo("Command saved to %s", commend_file_path)
             
             # 直接导入并调用egovlm_module中的process_command函数
             # 使用绝对导入路径来避免模块导入问题
@@ -240,22 +251,24 @@ class LangGuideNode:
                             rospy.logerr("Failed to convert image data to numpy arrays")
                             return
                             
-                        rospy.loginfo("Image data converted successfully")
-                        
+                        # rospy.loginfo("Image data converted successfully")
+                        rospy.loginfo("Received Color image and depth data")
                         # 调用处理函数
-                        rospy.loginfo("Calling egovlm process_command function")
-                        rospy.loginfo("color_array shape: %s", color_array.shape)
-                        rospy.loginfo("depth_array shape: %s", depth_array.shape)
-                        result = process_command(msg.data, color_array, depth_array)
+                        rospy.loginfo("Egovlm processing...")
+                        self.have_plan  = False
+                        times = time.time()
+                        result = process_command(msg.data, color_array, depth_array,debug=False)
                     except Exception as e:
                         rospy.logerr("Error converting image data: %s", str(e))
                         return
                     
                     # 处理结果
                     if result['success']:
-                        rospy.loginfo("Egovlm processing successful")
-                        # 这里可以添加对path_points等结果的进一步处理
-                        rospy.loginfo("Path points: %s", result['path_points'])
+                        # 计算处理耗时
+                        end_time = time.time()
+                        processing_time = end_time - times
+                        rospy.loginfo(f"Egovlm processing successful, time cost: {processing_time:.4f} seconds")    
+                        self._afterplan(result)
                     else:
                         rospy.logerr("Egovlm processing failed: %s", result['message'])
                         
@@ -420,6 +433,78 @@ class LangGuideNode:
         if dtype == np.int16:
             return depth.astype(np.float32) / 1000.0
         return depth
+    def _get_average_position(self):
+        """计算位置历史的平均值"""
+        if not self.position_history:
+            return self.position
+        
+        avg_x = sum(pos['x'] for pos in self.position_history) / len(self.position_history)
+        avg_y = sum(pos['y'] for pos in self.position_history) / len(self.position_history)
+        avg_z = sum(pos['z'] for pos in self.position_history) / len(self.position_history)
+        
+        # 创建一个具有x, y, z属性的对象
+        class AveragePosition:
+            def __init__(self, x, y, z):
+                self.x = x
+                self.y = y
+                self.z = z
+        
+        return AveragePosition(avg_x, avg_y, avg_z)
+    
+    # 规划数据坐标转换
+    def _transform_data_c2w(self, plandata_camera):
+        # 创建世界坐标系下的数据结构
+        plandata_world = {
+            'path_points': [],
+            'object': []
+        }
+        
+        # 获取平均位置
+        avg_position = self._get_average_position()
+        
+        # 1. 处理路径点
+        path_points = plandata_camera.get('path_points', [])
+        for point in path_points:
+            # 坐标方向转换
+            transformed_point = [point[2], -point[0], -point[1]]
+            # 使用平均位置平移到世界坐标系
+            world_point = [
+                round(transformed_point[0] + avg_position.x, 2),
+                round(transformed_point[1] + avg_position.y, 2),
+                round(transformed_point[2] + avg_position.z, 2)
+            ]
+            plandata_world['path_points'].append(world_point)
+        
+        # 2. 处理物体中心
+        objects = plandata_camera.get('object', [])
+        for obj in objects:
+            # 创建物体的副本，避免修改原始数据
+            world_obj = obj.copy()
+            # 假设物体有一个center字段表示中心点坐标
+            if 'center' in world_obj:
+                center = world_obj['center']
+                # 坐标方向转换
+                transformed_center = [center[2], -center[0], -center[1]]
+                # 使用平均位置平移到世界坐标系
+                world_center = [
+                    round(transformed_center[0] + avg_position.x, 2),
+                    round(transformed_center[1] + avg_position.y, 2),
+                    round(transformed_center[2] + avg_position.z, 2)
+                ]
+                world_obj['center'] = world_center
+            # 添加转换后的物体到结果中
+            plandata_world['object'].append(world_obj)
+        
+        return plandata_world
+        
+    def _afterplan(self,plandata_camera):
+        # 坐标转换到世界坐标系
+        self.plandata_world = self._transform_data_c2w(plandata_camera)
+        # 打印规划信息
+        rospy.loginfo("World Objects: %s", self.plandata_world['object'])
+        rospy.loginfo("World Path Points: %s", self.plandata_world['path_points'])
+        self.have_plan = True
+
 
 
 def main():

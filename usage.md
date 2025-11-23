@@ -35,7 +35,7 @@ roslaunch ego_planner rviz.launch
 sh shfiles/takeoff.sh
 
 
-
+cd lab/muav
 catkin_make
 source  ./devel/setup.bash
 sh shfiles/rspx4.sh

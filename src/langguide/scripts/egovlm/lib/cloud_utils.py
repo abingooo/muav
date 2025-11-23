@@ -230,8 +230,8 @@ class PointCloudUtils:
                 for line in point_cloud_data:
                     f.write(line + '\n')
             
-            print(f'点云已成功保存到: {ply_file_path}')
-            print(f'保存的点云包含 {len(points_3d)} 个点')
+            # print(f'点云已成功保存到: {ply_file_path}')
+            # print(f'保存的点云包含 {len(points_3d)} 个点')
             return True
         except Exception as e:
             print(f"保存点云到PLY文件时出错: {e}")
@@ -826,7 +826,7 @@ class PointCloudUtils:
             if input_ply_path is not None:
                 # 从PLY文件读取点云数据
                 points_3d, colors = self.read_ply_file(input_ply_path)
-                print(f"从PLY文件读取点云数据: {input_ply_path}")
+                #print(f"从PLY文件读取点云数据: {input_ply_path}")
             else:
                 # 检查必要参数
                 if depth_data is None or rgb_image is None:

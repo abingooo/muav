@@ -72,7 +72,7 @@ def getLSamResult(image_input, text_prompt, server_ip="127.0.0.1", server_port=5
         }
         
         # 发送请求
-        print(f"正在向LSAM服务器发送请求: {url}")
+        # print(f"正在向LSAM服务器发送请求: {url}")
         response = requests.post(url, json=data)
         
         # 检查响应状态
@@ -157,7 +157,7 @@ def visualize_result_local(image_path, result_json, save_path=None):
         # 保存结果
         if save_path:
             output_image.save(save_path)
-            print(f"可视化结果已保存到: {save_path}")
+            # print(f"可视化结果已保存到: {save_path}")
         
         return output_image
         
