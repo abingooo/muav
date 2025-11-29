@@ -54,3 +54,5 @@ target_link_libraries(traj_server ${catkin_LIBRARIES})
 #add_dependencies(traj_server ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 
+add_executable(test_plan_point_listener src/test_plan_point_listener.cpp)
+target_link_libraries(test_plan_point_listener ${catkin_LIBRARIES})

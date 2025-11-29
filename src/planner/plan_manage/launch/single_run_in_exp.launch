@@ -30,14 +30,15 @@
         <arg name="fx" value="383.19929174573906"/>
         <arg name="fy" value="384.76715878730715"/>
         <!-- maximum velocity and acceleration the drone will reach -->
-        <arg name="max_vel" value="1.0" />  <!-- 0.5 to 2.0 -->
+        <arg name="max_vel" value="0.5" />  <!-- 0.5 to 2.0 -->
         <arg name="max_acc" value="6.0" />
         <!--always set to 1.5 times grater than sensing horizen-->
         <arg name="planning_horizon" value="6" />
         <arg name="use_distinctive_trajs" value="false" />
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
-        <arg name="flight_type" value="1" />
+        <!-- 4: use langguide waypoints  -->
+        <arg name="flight_type" value="4" />
         <!-- global waypoints -->
         <!-- It generates a piecewise min-snap traj passing all waypoints -->
         <arg name="point_num" value="5" />

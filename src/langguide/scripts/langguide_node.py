@@ -15,7 +15,8 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import Trigger, TriggerResponse
 from nav_msgs.msg import Odometry
-
+from quadrotor_msgs.msg import LangCommand
+from geometry_msgs.msg import PoseStamped
 try:
     from cv_bridge import CvBridge, CvBridgeError
 except ImportError:  # 当cv_bridge不可用时提供备选方案
@@ -27,6 +28,9 @@ class LangGuideNode:
     """订阅 RGB-D 话题、缓存最新图像并周期发布状态的基础节点。"""
 
     def __init__(self):
+        # 航点完成标志
+        self.waypoint_completed = False
+        
         # 允许通过参数调整订阅/发布话题
         self.color_topic = rospy.get_param("~color_topic", "/camera/color/image_raw")
         self.depth_topic = rospy.get_param(
@@ -37,6 +41,8 @@ class LangGuideNode:
         self.odom_topic = rospy.get_param("~odom_topic", "/vins_fusion/imu_propagate")
         # 语言指令话题
         self.lang_cmd_topic = rospy.get_param("~lang_cmd_topic", "/lang_cmd")
+        # 规划点发布话题
+        self.plan_point_topic = rospy.get_param("~plan_point_topic", "/toplan/single_plan_point")
 
         status_rate = rospy.get_param("~status_rate", 10.0)
         if status_rate <= 0.0:
@@ -89,12 +95,20 @@ class LangGuideNode:
         )
         # 订阅语言指令话题
         self.lang_cmd_sub = rospy.Subscriber(
-            self.lang_cmd_topic, String, self._lang_cmd_cb, queue_size=queue_size
+            self.lang_cmd_topic, LangCommand, self._lang_cmd_cb, queue_size=queue_size
         )
+        # 订阅航点完成话题
+        self.waypoint_done_sub = rospy.Subscriber('/toplan/waypoint_done', String, self.waypoint_done_callback)
+
         # 发布状态字符串供其他模块监控
         self.status_pub = rospy.Publisher(
             self.status_topic, String, queue_size=10, latch=False
         )
+        # 规划点发布器
+        self.plan_point_pub = rospy.Publisher(self.plan_point_topic, PoseStamped, queue_size=10)
+        rospy.loginfo("PlanPointPublisher ready on %s", self.plan_point_topic)
+        
+
         self.status_srv = rospy.Service("~data_status", Trigger, self._handle_status)
 
         # 定时器相当于 10Hz 主循环
@@ -189,106 +203,17 @@ class LangGuideNode:
         self.have_cmd = True
         rospy.loginfo("\n")
         rospy.loginfo("="*40)
-        rospy.loginfo("Received language command: %s", msg.data)
-        
-        # 调用egovlm的模块函数处理语言指令
-        try:
-            import sys
-            import os
-            # 添加egovlm目录到Python路径
-            egovlm_path = os.path.join(os.path.dirname(__file__), 'egovlm')
-            if egovlm_path not in sys.path:
-                sys.path.append(egovlm_path)
-            
-            # 直接导入并调用egovlm_module中的process_command函数
-            # 使用绝对导入路径来避免模块导入问题
-            import sys
-            import os
-            
-            # 获取当前脚本所在目录
-            current_script_dir = os.path.dirname(os.path.abspath(__file__))
-            # 添加egovlm目录到Python路径
-            egovlm_dir = os.path.join(current_script_dir, 'egovlm')
-            if egovlm_dir not in sys.path:
-                sys.path.append(egovlm_dir)
-            
-            # 现在尝试导入egovlm_module
-            try:
-                from egovlm_module import process_command
-            except ImportError:
-                # 如果直接导入失败，尝试使用__import__函数
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("egovlm_module", os.path.join(egovlm_dir, "egovlm_module.py"))
-                egovlm_module = importlib.util.module_from_spec(spec)
-                sys.modules["egovlm_module"] = egovlm_module
-                spec.loader.exec_module(egovlm_module)
-                process_command = egovlm_module.process_command
-            
-            # 在后台线程中执行，避免阻塞ROS节点
-            from threading import Thread
-            def run_egovlm():
-                try:
-                    # 切换工作目录到egovlm目录
-                    original_dir = os.getcwd()
-                    os.chdir(egovlm_path)
-                    
-                    # 将ROS Image消息转换为numpy数组
-                    try:
-                        # 转换彩色图像
-                        if self.bridge_active and self.last_color is not None:
-                            color_array = self.bridge.imgmsg_to_cv2(self.last_color, "bgr8")
-                        else:
-                            color_array = self._decode_color_manual(self.last_color)
-                            
-                        # 转换深度图像
-                        if self.bridge_active and self.last_depth is not None:
-                            depth_array = self.bridge.imgmsg_to_cv2(self.last_depth, "32FC1")
-                        else:
-                            depth_array = self._decode_depth_manual(self.last_depth)
-                        
-                        # 检查转换结果
-                        if color_array is None or depth_array is None:
-                            rospy.logerr("Failed to convert image data to numpy arrays")
-                            return
-                            
-                        # rospy.loginfo("Image data converted successfully")
-                        rospy.loginfo("Received Color image and depth data")
-                        # 调用处理函数
-                        rospy.loginfo("Egovlm processing...")
-                        self.have_plan  = False
-                        times = time.time()
-                        result = process_command(msg.data, color_array, depth_array,debug=False)
-                    except Exception as e:
-                        rospy.logerr("Error converting image data: %s", str(e))
-                        return
-                    
-                    # 处理结果
-                    if result['success']:
-                        # 计算处理耗时
-                        end_time = time.time()
-                        processing_time = end_time - times
-                        rospy.loginfo(f"Egovlm processing successful, time cost: {processing_time:.4f} seconds")    
-                        self._afterplan(result)
-                    else:
-                        rospy.logerr("Egovlm processing failed: %s", result['message'])
-                        
-                except ImportError as e:
-                    rospy.logerr("Failed to import egovlm_module: %s", str(e))
-                except Exception as e:
-                    rospy.logerr("Error running egovlm: %s", str(e))
-                finally:
-                    # 恢复原来的工作目录
-                    os.chdir(original_dir)
-            
-            # 启动后台线程执行egovlm
-            thread = Thread(target=run_egovlm)
-            thread.daemon = True  # 设为守护线程，ROS节点关闭时自动终止
-            thread.start()
-            
-        except Exception as e:
-            rospy.logerr("Failed to call egovlm module: %s", str(e))
-        
-        # self.have_cmd = False
+        rospy.loginfo("Received command type: %s", self.last_lang_cmd.command_type)
+        rospy.loginfo("Received command content: %s", self.last_lang_cmd.content)
+        if self.last_lang_cmd.command_type == "plan":
+            self._plan()
+        elif self.last_lang_cmd.command_type == "run":
+            self._control()
+        else:
+            rospy.logwarn("Unknown command type: %s", self.last_lang_cmd.command_type)
+    
+
+
 
     def _handle_status(self, _req):
         resp = TriggerResponse()
@@ -325,7 +250,7 @@ class LangGuideNode:
             ])
         if self.have_cmd and self.last_lang_cmd:
             msg_parts.extend([
-                f"Lang cmd: {self.last_lang_cmd.data}"
+                f"ctrl cmd: type:{self.last_lang_cmd.command_type}, content:{self.last_lang_cmd.content}"
             ])
             self.have_cmd = False
         # 添加图像数据年龄信息
@@ -505,7 +430,173 @@ class LangGuideNode:
         rospy.loginfo("World Path Points: %s", self.plandata_world['path_points'])
         self.have_plan = True
 
+    def _plan(self):
+        # 调用egovlm的模块函数处理语言指令
+        try:
+            import sys
+            import os
+            # 添加egovlm目录到Python路径
+            egovlm_path = os.path.join(os.path.dirname(__file__), 'egovlm')
+            if egovlm_path not in sys.path:
+                sys.path.append(egovlm_path)
+            
+            # 直接导入并调用egovlm_module中的process_command函数
+            # 使用绝对导入路径来避免模块导入问题
+            import sys
+            import os
+            
+            # 获取当前脚本所在目录
+            current_script_dir = os.path.dirname(os.path.abspath(__file__))
+            # 添加egovlm目录到Python路径
+            egovlm_dir = os.path.join(current_script_dir, 'egovlm')
+            if egovlm_dir not in sys.path:
+                sys.path.append(egovlm_dir)
+            
+            # 现在尝试导入egovlm_module
+            try:
+                from egovlm_module import process_command
+            except ImportError:
+                # 如果直接导入失败，尝试使用__import__函数
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("egovlm_module", os.path.join(egovlm_dir, "egovlm_module.py"))
+                egovlm_module = importlib.util.module_from_spec(spec)
+                sys.modules["egovlm_module"] = egovlm_module
+                spec.loader.exec_module(egovlm_module)
+                process_command = egovlm_module.process_command
+            
+            # 在后台线程中执行，避免阻塞ROS节点
+            from threading import Thread
+            def run_egovlm():
+                try:
+                    # 切换工作目录到egovlm目录
+                    original_dir = os.getcwd()
+                    os.chdir(egovlm_path)
+                    
+                    # 将ROS Image消息转换为numpy数组
+                    try:
+                        # 转换彩色图像
+                        if self.bridge_active and self.last_color is not None:
+                            color_array = self.bridge.imgmsg_to_cv2(self.last_color, "bgr8")
+                        else:
+                            color_array = self._decode_color_manual(self.last_color)
+                            
+                        # 转换深度图像
+                        if self.bridge_active and self.last_depth is not None:
+                            depth_array = self.bridge.imgmsg_to_cv2(self.last_depth, "32FC1")
+                        else:
+                            depth_array = self._decode_depth_manual(self.last_depth)
+                        
+                        # 检查转换结果
+                        if color_array is None or depth_array is None:
+                            rospy.logerr("Failed to convert image data to numpy arrays")
+                            return
+                            
+                        # rospy.loginfo("Image data converted successfully")
+                        rospy.loginfo("Received Color image and depth data")
+                        # 调用处理函数
+                        if self.have_plan == False:
+                            rospy.loginfo("Egovlm processing...")
+                            times = time.time()
+                            result = process_command(self.last_lang_cmd.content, color_array, depth_array,debug=True)
+                        else:
+                            rospy.loginfo("have plan,egovlm cancel")
 
+                    except Exception as e:
+                        rospy.logerr("Error converting image data: %s", str(e))
+                        return
+                    
+                    # 处理结果
+                    if result['success']:
+                        # 计算处理耗时
+                        end_time = time.time()
+                        processing_time = end_time - times
+                        rospy.loginfo(f"Egovlm processing successful, time cost: {processing_time:.4f} seconds")    
+                        self._afterplan(result)
+                    else:
+                        rospy.logerr("Egovlm processing failed: %s", result['message'])
+                        
+                except ImportError as e:
+                    rospy.logerr("Failed to import egovlm_module: %s", str(e))
+                except Exception as e:
+                    rospy.logerr("Error running egovlm: %s", str(e))
+                finally:
+                    # 恢复原来的工作目录
+                    os.chdir(original_dir)
+            
+            # 启动后台线程执行egovlm
+            thread = Thread(target=run_egovlm)
+            thread.daemon = True  # 设为守护线程，ROS节点关闭时自动终止
+            thread.start()
+            
+        except Exception as e:
+            rospy.logerr("Failed to call egovlm module: %s", str(e))
+
+    
+    def waypoint_done_callback(self, msg):
+        """处理航点完成消息"""
+        rospy.loginfo("Received waypoint done notification: %s", msg.data)
+        self.waypoint_completed = True
+    
+    def _control(self):
+        """处理控制指令"""
+        rospy.loginfo("Received control command: %s", self.last_lang_cmd.content)
+        # if self.have_plan == False:
+        #     rospy.logerr("No plan available, please plan first")
+        #     return
+        if self.last_lang_cmd.content == "go":
+            # 先丢掉第一个点，因为一般是无人机当前的位置
+            # self.plandata_world['path_points'].pop(0)
+            # targets = self.plandata_world['path_points']
+            targets = [[1, 0, 0.5],[1,1,0.5]]
+            rospy.loginfo(f"Starting control with {len(targets)} targets")
+            
+            for i, target in enumerate(targets):
+                rospy.logdebug(f"Flying to target {i+1}/{len(targets)}: {target}")
+                
+                # 重置完成标志
+                self.waypoint_completed = False
+                
+                # 发布航点
+                pose = PoseStamped()
+                pose.header.stamp = rospy.Time.now()
+                pose.header.frame_id ="world"
+                pose.pose.position.x = target[0]
+                pose.pose.position.y = target[1]
+                pose.pose.position.z = target[2]
+                pose.pose.orientation.w = 1.0
+                self.plan_point_pub.publish(pose)
+                rospy.loginfo(
+                            "Published single plan point: (%.2f, %.2f, %.2f)",
+                            pose.pose.position.x,
+                            pose.pose.position.y,
+                            pose.pose.position.z,
+                        )
+                # 等待到达目标点
+                rospy.loginfo("Waiting to reach target...")
+                
+                start = rospy.Time.now()
+                rate = rospy.Rate(20)
+                while (
+                    not self.waypoint_completed  
+                    and not rospy.is_shutdown()
+                ):
+                    rate.sleep()
+                rospy.loginfo(f"Reached target {i+1}/{len(targets)}")
+            
+            rospy.loginfo("All targets reached successfully! Done.")
+            # 开启规划使能
+            self.have_plan = False
+        elif self.last_lang_cmd.content == "cancel":
+            # 清空self.plandata_world
+            self.plandata_world = {}
+            rospy.loginfo("cancel plan")
+            # 开启规划使能
+            self.have_plan = False
+        else:
+            rospy.logerr("Unknown control command: %s", self.last_lang_cmd.content)
+        
+        
+        
 
 def main():
     rospy.init_node("langguide_node")

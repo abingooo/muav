@@ -7,7 +7,7 @@
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/Imu.h>
 #include <ros/ros.h>
-#include <std_msgs/Empty.h>
+#include <std_msgs/String.h>
 #include <vector>
 #include <visualization_msgs/Marker.h>
 
@@ -83,8 +83,8 @@ namespace ego_planner
     /* ROS utils */
     ros::NodeHandle node_;
     ros::Timer exec_timer_, safety_timer_;
-    ros::Subscriber waypoint_sub_, odom_sub_, swarm_trajs_sub_, broadcast_bspline_sub_, trigger_sub_;
-    ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, swarm_trajs_pub_, broadcast_bspline_pub_;
+    ros::Subscriber waypoint_sub_, planpoint_sub_, odom_sub_, swarm_trajs_sub_, broadcast_bspline_sub_, trigger_sub_;
+    ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, swarm_trajs_pub_, broadcast_bspline_pub_, waypoint_done_pub_;
 
     /* helper functions */
     bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method
@@ -105,6 +105,7 @@ namespace ego_planner
     void execFSMCallback(const ros::TimerEvent &e);
     void checkCollisionCallback(const ros::TimerEvent &e);
     void waypointCallback(const geometry_msgs::PoseStampedPtr &msg);
+    void planpointCallback(const geometry_msgs::PoseStampedPtr &msg);
     void triggerCallback(const geometry_msgs::PoseStampedPtr &msg);
     void odometryCallback(const nav_msgs::OdometryConstPtr &msg);
     void swarmTrajsCallback(const traj_utils::MultiBsplinesPtr &msg);

@@ -1,5 +1,6 @@
 
 #include <plan_manage/ego_replan_fsm.h>
+#include <std_msgs/Empty.h>
 
 namespace ego_planner
 {
@@ -58,10 +59,15 @@ namespace ego_planner
 
     bspline_pub_ = nh.advertise<traj_utils::Bspline>("planning/bspline", 10);
     data_disp_pub_ = nh.advertise<traj_utils::DataDisp>("planning/data_display", 100);
+    waypoint_done_pub_ = nh.advertise<std_msgs::String>("/toplan/waypoint_done", 10);
 
     if (target_type_ == TARGET_TYPE::MANUAL_TARGET)
     {
       waypoint_sub_ = nh.subscribe("/move_base_simple/goal", 1, &EGOReplanFSM::waypointCallback, this);
+    }
+    else if (target_type_ == TARGET_TYPE::PLAN_TARGET)
+    {
+      planpoint_sub_ = nh.subscribe("/toplan/single_plan_point", 1, &EGOReplanFSM::planpointCallback, this);
     }
     else if (target_type_ == TARGET_TYPE::PRESET_TARGET)
     {
@@ -219,6 +225,19 @@ namespace ego_planner
 
     Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y, 1.0);
 
+    planNextWaypoint(end_wp);
+  }
+
+  void EGOReplanFSM::planpointCallback(const geometry_msgs::PoseStampedPtr &msg)
+  {
+    if (msg->pose.position.z < -0.1)
+      return;
+
+    cout << "Plan Point Triggered!" << endl;
+    init_pt_ = odom_pos_;
+
+    Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
+    
     planNextWaypoint(end_wp);
   }
 
@@ -414,6 +433,13 @@ namespace ego_planner
     int pre_s = int(exec_state_);
     exec_state_ = new_state;
     cout << "[" + pos_call + "]: from " + state_str[pre_s] + " to " + state_str[int(new_state)] << endl;
+    if (state_str[pre_s] == "EXEC_TRAJ" && state_str[int(new_state)] == "WAIT_TARGET")
+    {
+      std_msgs::String done_msg;
+      done_msg.data = "arrived";
+      waypoint_done_pub_.publish(done_msg);
+      cout << "[FSM]: Published waypoint completion message" << endl;
+    }
   }
 
   std::pair<int, EGOReplanFSM::FSM_EXEC_STATE> EGOReplanFSM::timesOfConsecutiveStateCalls()
