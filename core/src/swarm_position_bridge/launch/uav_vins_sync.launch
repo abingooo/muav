@@ -1,0 +1,69 @@
+<launch>
+    <!-- UAV 编号：0 / 1 / 2 -->
+    <arg name="uav_id" default="0"/>
+
+    <!-- UAV 命名空间：uav0 / uav1 / uav2 -->
+    <arg name="uav_ns" default="uav$(arg uav_id)"/>
+
+    <!-- 发布频率 -->
+    <arg name="max_rate" default="20.0"/>
+
+    <!-- 现在 VINS 已经 namespace 化，所以输入话题也要带 namespace -->
+    <arg name="input_topic" default="/$(arg uav_ns)/vins_fusion/imu_propagate"/>
+
+    <!-- 对外广播的位置话题 -->
+    <arg name="output_topic" default="/$(arg uav_ns)/vins_position"/>
+
+    <!-- master_discovery 节点名必须唯一 -->
+    <node pkg="fkie_master_discovery"
+          type="master_discovery"
+          name="$(arg uav_ns)_master_discovery"
+          output="screen"/>
+
+    <!-- master_sync 节点名必须唯一 -->
+    <node pkg="fkie_master_sync"
+          type="master_sync"
+          name="$(arg uav_ns)_master_sync"
+          output="screen">
+
+        <!-- 三台无人机之间只同步这三个轻量位置话题 -->
+        <rosparam param="sync_topics">
+            [
+            '/uav0/vins_position',
+            '/uav1/vins_position',
+            '/uav2/vins_position'
+            ]
+        </rosparam>
+
+        <!-- 只同步这三个发布位置的节点 -->
+        <rosparam param="sync_nodes">
+            [
+            '/uav0_vins_position_republisher',
+            '/uav1_vins_position_republisher',
+            '/uav2_vins_position_republisher'
+            ]
+        </rosparam>
+
+        <!-- 禁止同步 service，避免 mavros / camera service 引起同名节点问题 -->
+        <rosparam param="ignore_services">
+            [
+            '/.*'
+            ]
+        </rosparam>
+
+        <!-- 禁止按需同步，防止其他 topic 被自动拉进来 -->
+        <param name="sync_topics_on_demand" value="false"/>
+    </node>
+
+    <!-- 注意：这个节点我建议不要放进 group ns，而是直接用唯一节点名 -->
+    <node pkg="swarm_position_bridge"
+          type="vins_position_republisher.py"
+          name="$(arg uav_ns)_vins_position_republisher"
+          output="screen">
+
+        <param name="uav_id" value="$(arg uav_id)"/>
+        <param name="max_rate" value="$(arg max_rate)"/>
+        <param name="input_topic" value="$(arg input_topic)"/>
+        <param name="output_topic" value="$(arg output_topic)"/>
+    </node>
+</launch>

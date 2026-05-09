@@ -1,0 +1,83 @@
+# MPC ROS 适配层配置
+# 策略核心参数在 mpc_config.yaml；本文件只描述 ROS 话题、角色、坐标系和输出。
+
+adapter:
+  # 原生输出 quadrotor_msgs/PositionCommand 的话题。
+  output_topic: /uav5/position_cmd
+  # 可选：同时输出 geometry_msgs/PoseStamped，接 core 的 toplan/single_plan_point。
+  plan_point_enabled: true
+  plan_point_topic: /toplan/single_plan_point
+  plan_point_frame_id: enemy
+  # 输出坐标系。local 表示转回 output_frame_role 对应 UAV 的本地坐标系；world 表示保留 MPC 世界系。
+  output_frame: local
+  output_frame_role: enemy
+  output_frame_id: enemy
+  output_default_height: 1.0
+  output_velocity_z: 0.0
+  publish_rate_hz: 20.0
+  stale_timeout_sec: 0.5
+  mpc_config_path: mpc_config.yaml
+
+position_command:
+  kx: [5.7, 5.7, 6.2]
+  kv: [3.4, 3.4, 4.0]
+  yaw: 0.0
+  yaw_dot: 0.0
+  trajectory_id: 1
+
+defaults:
+  # 输入话题还没收到时，各角色使用的默认状态。position/velocity 在对应 UAV 本地坐标系下。
+  states:
+    enemy:
+      position: [5.0, 0.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
+    defender_0:
+      position: [1.0, 0.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
+    defender_1:
+      position: [0.5, 1.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
+    defender_2:
+      position: [0.5, -1.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
+    defender_3:
+      position: [1.5, 0.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
+
+coordinate_transforms:
+  # local_to_world 定义：world_position = Rz(yaw_deg) * local_position + translation
+  # velocity 只做旋转，不加 translation。
+  # yaw_deg 逆时针为正，顺时针为负。
+  enemy:
+    translation: [-8.1, 0.0, 0.0]
+    yaw_deg: 0.0
+  defender_0:
+    translation: [0.0, 1.5, 0.0]
+    yaw_deg: 180.0
+  defender_1:
+    translation: [0.0, 1.5, 0.0]
+    yaw_deg: 180.0
+  defender_2:
+    translation: [100.0, 0.0, 0.0]
+    yaw_deg: 180.0
+  defender_3:
+    translation: [100.0, 1.0, 0.0]
+    yaw_deg: 180.0
+
+inputs:
+  # message_type 支持 auto / nav_msgs/Odometry / geometry_msgs/PointStamped。
+  - role: enemy
+    topic: /uav5/vins_position
+    message_type: auto
+  - role: defender_0
+    topic: /uav0/vins_position
+    message_type: auto
+  - role: defender_1
+    topic: /uav1/vins_position
+    message_type: auto
+  - role: defender_2
+    topic: /uav2/vins_position
+    message_type: auto
+  - role: defender_3
+    topic: /uav3/vins_position
+    message_type: auto

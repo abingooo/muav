@@ -1,0 +1,85 @@
+# 推理框架配置
+# 这个文件可以直接写中文注释；修改参数后重新启动程序即可生效。
+
+inference:
+  # checkpoint 可以写相对路径；相对路径基于 adv/src/adv_module/ 解析。
+  checkpoint_path: policy_checkpoint.pt
+  # auto 会优先检测 CUDA；当前 requirements 默认安装 CPU-only PyTorch，所以会落到 cpu。
+  device: auto
+  # defender_names 的数量必须为 4，顺序对应输入 snapshot.defenders。
+  defender_names: [Drone1, Drone2, Drone3, Drone4]
+  # 防守目标/原点位置，z 通常也是默认巡航高度。
+  origin: [0.0, 0.0, -14.0]
+  obs_dim: 25
+  act_dim: 2
+  shared_actor: true
+  pos_scale: 90.0
+  vel_scale: 10.0
+  # null 表示使用 origin[2] 作为目标高度。
+  desired_altitude_z: null
+  z_kp: 1.8
+  z_kd: 0.8
+  z_vz_limit: 3.5
+  z_soft_margin: 1.0
+  z_hard_push: 2.6
+  apply_role_guidance: true
+  apply_safety_guard: true
+
+roles:
+  # 角色/槽位规划参数。
+  hold_steps: 5
+  replan_min_steps: 2
+  break_enemy_dist: 26.0
+  break_slot_err_scale: 0.6
+  kill_trigger: 20.0
+  kill_late_frac: 0.58
+  kill_late_dist: 26.0
+  kill_hold_steps: 6
+  orbit_scale: 0.78
+  guard_forward_offset: 4.2
+  attack_lat_min: 2.4
+  attack_lat_max: 4.8
+  support_forward: 2.2
+  slot_obs_scale: 24.0
+  gate_slot_scale: 7.0
+  intercept_slot_scale: 8.5
+
+defender:
+  # defender 速度限制和角色引导混合参数。
+  vmax: 13.5
+  interceptor_speed_floor: 1.0
+  blocker_speed_scale: 1.0
+  override_blend: 0.48
+  override_blend_kill: 0.86
+  override_blend_gate: 0.8
+  overshoot_blend: 0.94
+  finish_dist: 4.8
+  finish_enemy_origin_dist: 12.0
+  finish_blend: 0.985
+  overshoot_proj: 0.42
+  overshoot_lat: 0.16
+  tail_lat_max: 0.16
+
+enemy_slowdown:
+  # 接近敌机时的减速策略。
+  enabled: true
+  dist_near: 3.5
+  dist_mid: 6.5
+  dist_far: 12.0
+  scale_close: 0.28
+  scale_near: 0.55
+  scale_far: 0.92
+  lateral: 10.0
+  min_proj: 0.5
+  approach_cos: 0.45
+
+safety:
+  # 防碰撞和场地边界保护。
+  repulse_range: 5.0
+  repulse_gain: 6.5
+  boundary_margin: 22.0
+  boundary_gain: 5.0
+  bounds:
+    x: [-95.0, 95.0]
+    y: [-95.0, 95.0]
+    z: [-40.0, -4.0]

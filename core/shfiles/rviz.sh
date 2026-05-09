@@ -1,0 +1,2 @@
+export DISABLE_ROS1_EOL_WARNINGS=1
+roslaunch ego_planner rviz.launch

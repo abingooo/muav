@@ -1,0 +1,20 @@
+<launch>
+  <arg name="model_config" default="$(find mpc)/mpc_module/model_config.yaml"/>
+  <arg name="self_uav" default="$(optenv UAV_NAME uav)"/>
+  <arg name="core_namespace" default="$(arg self_uav)"/>
+  <arg name="fleet_uavs" default="uav0,uav1,uav2,uav3,uav4"/>
+  <arg name="node_name" default="mpc_$(arg self_uav)_adapter"/>
+  <arg name="output_topic" default="/$(arg self_uav)/position_cmd"/>
+  <arg name="publish_plan_point" default="true"/>
+  <arg name="plan_point_topic" default="/$(arg core_namespace)/toplan/single_plan_point"/>
+
+  <node pkg="mpc" type="mpc_ros_adapter" name="$(arg node_name)" ns="/$(arg self_uav)" output="screen">
+    <param name="model_config" value="$(arg model_config)"/>
+    <param name="auto_role_mapping" value="true"/>
+    <param name="self_uav" value="$(arg self_uav)"/>
+    <param name="fleet_uavs" value="$(arg fleet_uavs)"/>
+    <param name="output_topic" value="$(arg output_topic)"/>
+    <param name="plan_point_enabled" value="$(arg publish_plan_point)"/>
+    <param name="plan_point_topic" value="$(arg plan_point_topic)"/>
+  </node>
+</launch>

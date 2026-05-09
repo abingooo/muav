@@ -1,0 +1,41 @@
+# Catkin build outputs
+build/
+devel/
+install/
+.catkin_tools/
+
+# ROS runtime artifacts
+*.bag
+*.bag.active
+*.db3
+*.log
+log/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# C/C++ and CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Local env files
+.env
+.env.*
