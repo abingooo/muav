@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import yaml
 
+from .coordinate_transform import CoordinateTransform
 from .inference_framework import (
     InferenceEngine,
     InferenceSnapshot,
@@ -22,6 +23,27 @@ MODULE_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL_CONFIG_PATH = str(MODULE_DIR / "model_config.yaml")
 DEFENDER_ROLES = ("defender_0", "defender_1", "defender_2", "defender_3")
 ALL_ROLES = DEFENDER_ROLES + ("enemy",)
+TOP_LEVEL_KEYS = {"adapter", "defaults", "coordinate_transforms", "inputs", "position_command"}
+ADAPTER_KEYS = {
+    "output_topic",
+    "plan_point_enabled",
+    "plan_point_topic",
+    "plan_point_frame_id",
+    "output_role",
+    "output_default_height",
+    "output_velocity_z",
+    "output_frame",
+    "publish_rate_hz",
+    "stale_timeout_sec",
+    "command_position_dt",
+    "output_frame_id",
+    "estimate_velocity_from_position",
+    "inference_config_path",
+}
+STATE_KEYS = {"position", "velocity"}
+TRANSFORM_KEYS = {"translation", "yaw_deg"}
+INPUT_KEYS = {"role", "topic", "message_type"}
+POSITION_COMMAND_KEYS = {"kx", "kv", "yaw", "yaw_dot", "trajectory_id"}
 
 
 @dataclass
@@ -30,38 +52,6 @@ class TopicState:
     velocity: np.ndarray
     stamp_sec: Optional[float] = None
     received: bool = False
-
-
-@dataclass
-class CoordinateTransform:
-    translation: np.ndarray
-    yaw_rad: float
-
-    @property
-    def rotation(self) -> np.ndarray:
-        c = math.cos(self.yaw_rad)
-        s = math.sin(self.yaw_rad)
-        return np.asarray(
-            [
-                [c, -s, 0.0],
-                [s, c, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-
-    def local_to_world_position(self, position: np.ndarray) -> np.ndarray:
-        return (self.rotation.dot(position.astype(np.float32)) + self.translation).astype(np.float32)
-
-    def local_to_world_velocity(self, velocity: np.ndarray) -> np.ndarray:
-        return self.rotation.dot(velocity.astype(np.float32)).astype(np.float32)
-
-    def world_to_local_position(self, position: np.ndarray) -> np.ndarray:
-        return self.rotation.T.dot(position.astype(np.float32) - self.translation).astype(np.float32)
-
-    def world_to_local_velocity(self, velocity: np.ndarray) -> np.ndarray:
-        return self.rotation.T.dot(velocity.astype(np.float32)).astype(np.float32)
-
 
 def _load_yaml(path: str) -> Dict[str, Any]:
     config_path = Path(path)
@@ -79,6 +69,12 @@ def _section(config: Dict[str, Any], key: str) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"配置项 {key} 必须是 YAML mapping")
     return value
+
+
+def _reject_unknown_keys(config: Dict[str, Any], allowed: set, *, path: str) -> None:
+    unknown = sorted(str(key) for key in config if key not in allowed)
+    if unknown:
+        raise ValueError(f"{path} 包含未知配置项: {unknown}")
 
 
 def _as_float3(values: Sequence[Any], *, name: str) -> np.ndarray:
@@ -174,8 +170,10 @@ class AdvRosAdapter:
 
         self.model_config_path = model_config_path
         self.model_config = _load_yaml(model_config_path)
+        _reject_unknown_keys(self.model_config, TOP_LEVEL_KEYS, path="model_config")
         self.model_config_dir = Path(model_config_path).resolve().parent
         self.adapter_config = _section(self.model_config, "adapter")
+        _reject_unknown_keys(self.adapter_config, ADAPTER_KEYS, path="adapter")
         self.output_default_height = float(self.adapter_config.get("output_default_height", -14.0))
         self.output_velocity_z = float(self.adapter_config.get("output_velocity_z", 0.0))
         self.output_frame = str(self.adapter_config.get("output_frame", "local"))
@@ -204,8 +202,9 @@ class AdvRosAdapter:
         self.command_position_dt = float(self.adapter_config.get("command_position_dt", 0.1))
         self.stale_timeout_sec = float(self.adapter_config.get("stale_timeout_sec", 0.5))
         self.estimate_velocity = bool(self.adapter_config.get("estimate_velocity_from_position", True))
-        self.frame_id = str(self.adapter_config.get("frame_id", "world"))
+        self.output_frame_id = str(self.adapter_config.get("output_frame_id", "world"))
         self.position_command_config = _section(self.model_config, "position_command")
+        _reject_unknown_keys(self.position_command_config, POSITION_COMMAND_KEYS, path="position_command")
 
         self.transforms = self._build_coordinate_transforms()
         self.states = self._build_default_states()
@@ -219,7 +218,7 @@ class AdvRosAdapter:
             rospy.get_param("~plan_point_topic", self.adapter_config.get("plan_point_topic", "/toplan/single_plan_point"))
         )
         self.plan_point_frame_id = str(
-            rospy.get_param("~plan_point_frame_id", self.adapter_config.get("plan_point_frame_id", self.frame_id))
+            rospy.get_param("~plan_point_frame_id", self.adapter_config.get("plan_point_frame_id", self.output_frame_id))
         )
         self.plan_point_publisher = (
             rospy.Publisher(self.plan_point_topic, PoseStamped, queue_size=10)
@@ -227,20 +226,72 @@ class AdvRosAdapter:
             else None
         )
 
-        rospy.loginfo("adv ROS adapter started")
-        rospy.loginfo("model_config: %s", model_config_path)
-        rospy.loginfo("output role/topic: %s -> %s", self.output_role, rospy.resolve_name(output_topic))
-        rospy.loginfo("output frame: %s", self.output_frame)
+        self._log_startup_summary(model_config_path, output_topic)
+
+    def _log_startup_summary(self, model_config_path: str, output_topic: str) -> None:
+        self.rospy.loginfo("adv ROS adapter started")
+        self.rospy.loginfo("model_config: %s", model_config_path)
+        self.rospy.loginfo(
+            "output: role=%s topic=%s output_frame=%s output_frame_id=%s",
+            self.output_role,
+            self.rospy.resolve_name(output_topic),
+            self.output_frame,
+            self.output_frame_id,
+        )
+        self._warn_if_output_frame_id_mismatch()
         if self.plan_point_enabled:
-            rospy.loginfo("plan point topic: %s", rospy.resolve_name(self.plan_point_topic))
+            self.rospy.loginfo(
+                "plan point: topic=%s frame_id=%s",
+                self.rospy.resolve_name(self.plan_point_topic),
+                self.plan_point_frame_id,
+            )
+            if self.plan_point_frame_id != self.output_frame_id:
+                self.rospy.logwarn(
+                    "plan_point_frame_id (%s) 与 output_frame_id (%s) 不一致；"
+                    "plan_point 复用 PositionCommand 坐标，通常应保持一致",
+                    self.plan_point_frame_id,
+                    self.output_frame_id,
+                )
+
+        for role in ALL_ROLES:
+            topic, msg_type = self.input_descriptions.get(role, ("", "defaults.states"))
+            topic_text = self.rospy.resolve_name(topic) if topic else "defaults.states"
+            transform = self.transforms[role]
+            translation = [round(float(value), 6) for value in transform.translation.tolist()]
+            self.rospy.loginfo(
+                "role config: role=%s topic=%s type=%s local_to_world.translation=%s yaw_deg=%.3f yaw_rad=%.6f",
+                role,
+                topic_text,
+                msg_type,
+                translation,
+                math.degrees(transform.yaw_rad),
+                transform.yaw_rad,
+            )
+
+    def _warn_if_output_frame_id_mismatch(self) -> None:
+        if self.output_frame == "local" and self.output_frame_id != self.output_role:
+            self.rospy.logwarn(
+                "output_frame=local 且 output_role=%s，但 output_frame_id=%s；"
+                "通常 output_frame_id 应与 output_role 一致",
+                self.output_role,
+                self.output_frame_id,
+            )
+        elif self.output_frame == "world" and self.output_frame_id == self.output_role:
+            self.rospy.logwarn(
+                "output_frame=world，但 output_frame_id=%s 看起来像 role 本地坐标系；"
+                "请确认 header.frame_id 是否应为 world",
+                self.output_frame_id,
+            )
 
     def _build_coordinate_transforms(self) -> Dict[str, CoordinateTransform]:
         transforms_config = _section(self.model_config, "coordinate_transforms")
+        _reject_unknown_keys(transforms_config, set(ALL_ROLES), path="coordinate_transforms")
         transforms: Dict[str, CoordinateTransform] = {}
         for role in ALL_ROLES:
             role_config = transforms_config.get(role)
             if not isinstance(role_config, dict):
                 raise ValueError(f"coordinate_transforms.{role} 必须配置 translation 和 yaw_deg")
+            _reject_unknown_keys(role_config, TRANSFORM_KEYS, path=f"coordinate_transforms.{role}")
             transforms[role] = CoordinateTransform(
                 translation=_as_float3(role_config.get("translation", [0.0, 0.0, 0.0]), name=f"{role}.translation"),
                 yaw_rad=math.radians(float(role_config.get("yaw_deg", 0.0))),
@@ -248,12 +299,16 @@ class AdvRosAdapter:
         return transforms
 
     def _build_default_states(self) -> Dict[str, TopicState]:
-        states_config = _section(_section(self.model_config, "defaults"), "states")
+        defaults_config = _section(self.model_config, "defaults")
+        _reject_unknown_keys(defaults_config, {"states"}, path="defaults")
+        states_config = _section(defaults_config, "states")
+        _reject_unknown_keys(states_config, set(ALL_ROLES), path="defaults.states")
         states: Dict[str, TopicState] = {}
         for role in ALL_ROLES:
             role_config = states_config.get(role)
             if not isinstance(role_config, dict):
                 raise ValueError(f"defaults.states.{role} 必须配置默认 position 和 velocity")
+            _reject_unknown_keys(role_config, STATE_KEYS, path=f"defaults.states.{role}")
             local_position = _as_float3(
                 role_config.get("position", [0.0, 0.0, None]),
                 name=f"{role}.position",
@@ -294,10 +349,12 @@ class AdvRosAdapter:
             ]
 
         subscribers: List[Any] = []
+        self.input_descriptions: Dict[str, Tuple[str, str]] = {}
         seen_roles = set()
         for entry in inputs:
             if not isinstance(entry, dict):
                 raise ValueError("inputs 中的每一项都必须是 YAML mapping")
+            _reject_unknown_keys(entry, INPUT_KEYS, path="inputs[]")
             role = str(entry.get("role", ""))
             topic = str(entry.get("topic", ""))
             msg_type = str(entry.get("message_type", "auto"))
@@ -306,6 +363,7 @@ class AdvRosAdapter:
             if not topic:
                 raise ValueError(f"输入角色 {role} 缺少 topic")
             seen_roles.add(role)
+            self.input_descriptions[role] = (topic, msg_type)
 
             if msg_type == "nav_msgs/Odometry":
                 subscribers.append(rospy.Subscriber(topic, self.Odometry, self._make_typed_callback(role, "odometry"), queue_size=10))
@@ -315,7 +373,6 @@ class AdvRosAdapter:
                 subscribers.append(rospy.Subscriber(topic, rospy.AnyMsg, self._make_any_callback(role), queue_size=10))
             else:
                 raise ValueError(f"不支持的 message_type: {msg_type}")
-            rospy.loginfo("input role/topic/type: %s <- %s (%s)", role, rospy.resolve_name(topic), msg_type)
 
         missing = [role for role in ALL_ROLES if role not in seen_roles]
         if missing:
@@ -461,7 +518,7 @@ class AdvRosAdapter:
 
         msg = self.PositionCommand()
         msg.header.stamp = self.rospy.Time.now()
-        msg.header.frame_id = self.frame_id
+        msg.header.frame_id = self.output_frame_id
         msg.position.x = float(target_position[0])
         msg.position.y = float(target_position[1])
         msg.position.z = float(target_position[2])

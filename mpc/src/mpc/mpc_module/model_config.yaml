@@ -7,10 +7,12 @@ adapter:
   # 可选：同时输出 geometry_msgs/PoseStamped，接 core 的 toplan/single_plan_point。
   plan_point_enabled: true
   plan_point_topic: /toplan/single_plan_point
+  # plan_point 复用 PositionCommand 坐标，通常应与 output_frame_id 一致。
   plan_point_frame_id: enemy
-  # 输出坐标系。local 表示转回 output_frame_role 对应 UAV 的本地坐标系；world 表示保留 MPC 世界系。
+  # 输出坐标系。local 表示转回 output_role 对应 UAV 的本地坐标系；world 表示保留 MPC 世界系。
   output_frame: local
-  output_frame_role: enemy
+  # MPC 控制对象固定是 enemy；这里保持和 ADV 一致的 output_role 范式。
+  output_role: enemy
   output_frame_id: enemy
   output_default_height: 1.0
   output_velocity_z: 0.0
