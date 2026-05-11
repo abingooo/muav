@@ -12,6 +12,7 @@ import numpy as np
 import yaml
 
 from .coordinate_transform import CoordinateTransform
+from .game_end import GameEndConfig, GameEndMonitor, GameEndStatus
 from .mpc_engine import MpcEngine, MpcSnapshot, VehicleState
 
 
@@ -20,7 +21,7 @@ DEFAULT_MODEL_CONFIG_PATH = str(MODULE_DIR / "model_config.yaml")
 ENEMY_ROLE = "enemy"
 DEFENDER_ROLES = ("defender_0", "defender_1", "defender_2", "defender_3")
 ALL_ROLES = (ENEMY_ROLE,) + DEFENDER_ROLES
-TOP_LEVEL_KEYS = {"adapter", "position_command", "defaults", "coordinate_transforms", "inputs"}
+TOP_LEVEL_KEYS = {"adapter", "position_command", "defaults", "coordinate_transforms", "inputs", "game_end"}
 ADAPTER_KEYS = {
     "output_topic",
     "plan_point_enabled",
@@ -34,11 +35,23 @@ ADAPTER_KEYS = {
     "publish_rate_hz",
     "stale_timeout_sec",
     "mpc_config_path",
+    "active_defender_roles",
 }
 STATE_KEYS = {"position", "velocity"}
 TRANSFORM_KEYS = {"translation", "yaw_deg"}
 INPUT_KEYS = {"role", "topic", "message_type"}
 POSITION_COMMAND_KEYS = {"kx", "kv", "yaw", "yaw_dot", "trajectory_id"}
+GAME_END_KEYS = {
+    "enabled",
+    "capture_distance_m",
+    "asset_distance_m",
+    "hold_duration_sec",
+    "asset_origin",
+    "out_of_bounds_enabled",
+    "world_bounds",
+    "command_topics",
+}
+WORLD_BOUNDS_KEYS = {"x", "y", "z"}
 
 
 @dataclass
@@ -49,13 +62,17 @@ class TopicState:
     received: bool = False
 
 def _load_yaml(path: str) -> Dict[str, Any]:
+    return _load_yaml_mapping(path, description="model_config")
+
+
+def _load_yaml_mapping(path: str, *, description: str) -> Dict[str, Any]:
     config_path = Path(path)
     if not config_path.exists():
-        raise FileNotFoundError(f"model_config 不存在: {path}")
+        raise FileNotFoundError(f"{description} 不存在: {path}")
     with config_path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
-        raise ValueError(f"model_config 顶层必须是 YAML mapping: {path}")
+        raise ValueError(f"{description} 顶层必须是 YAML mapping: {path}")
     return data
 
 
@@ -81,6 +98,38 @@ def _as_float3(values: Sequence[Any], *, name: str) -> np.ndarray:
             raise ValueError(f"{name}[{idx}] 不能为 null，请在 YAML 中显式填写数值")
         out.append(float(value))
     return np.asarray(out, dtype=np.float32)
+
+
+def _as_optional_bounds(values: Optional[Sequence[Any]], *, name: str) -> Optional[Tuple[float, float]]:
+    if values is None:
+        return None
+    if len(values) != 2:
+        raise ValueError(f"{name} 必须是长度为 2 的数组")
+    lower = float(values[0])
+    upper = float(values[1])
+    if lower > upper:
+        raise ValueError(f"{name} 下界不能大于上界")
+    return lower, upper
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off", ""):
+            return False
+    return bool(value)
+
+
+def _as_optional_bool(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in ("", "auto", "default"):
+        return None
+    return _as_bool(value)
 
 
 def _resolve_config_path(path: str, base_dir: Path) -> str:
@@ -141,6 +190,54 @@ def _parse_fleet_uavs(value: Any) -> List[str]:
     return names
 
 
+def _parse_defender_roles(value: Any, *, name: str) -> Tuple[str, ...]:
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").split(",")
+    elif isinstance(value, (list, tuple)):
+        raw_items = value
+    else:
+        raise ValueError(f"{name} 必须是逗号分隔字符串或 YAML list")
+
+    roles: List[str] = []
+    for item in raw_items:
+        role = str(item or "").strip()
+        if not role:
+            continue
+        if role not in DEFENDER_ROLES:
+            raise ValueError(f"{name} 包含未知 defender role: {role}")
+        if role not in roles:
+            roles.append(role)
+    if not roles:
+        raise ValueError(f"{name} 至少需要包含一个 defender role")
+    return tuple(roles)
+
+
+def _topic_to_position_cmd_topic(topic: str) -> str:
+    topic = str(topic or "").strip()
+    if not topic:
+        return ""
+    suffix = "/vins_position"
+    if topic.endswith(suffix):
+        return f"{topic[:-len(suffix)]}/position_cmd"
+    return ""
+
+
+def _load_mpc_environment(mpc_config_path: str) -> Dict[str, Any]:
+    config = _load_yaml_mapping(mpc_config_path, description="mpc_config")
+    environment = config.get("environment", config)
+    if not isinstance(environment, dict):
+        raise ValueError(f"mpc_config.environment 必须是 YAML mapping: {mpc_config_path}")
+    return environment
+
+
+def _env_axis_bounds(environment: Dict[str, Any], axis: str) -> Optional[Tuple[float, float]]:
+    lower_key = f"{axis}_min"
+    upper_key = f"{axis}_max"
+    if lower_key not in environment or upper_key not in environment:
+        return None
+    return _as_optional_bounds([environment[lower_key], environment[upper_key]], name=f"mpc_config.environment.{axis}")
+
+
 class MpcRosAdapter:
     def __init__(self, model_config_path: str = DEFAULT_MODEL_CONFIG_PATH):
         import rospy
@@ -160,6 +257,13 @@ class MpcRosAdapter:
         self.model_config_dir = Path(model_config_path).resolve().parent
         self.adapter_config = _section(self.model_config, "adapter")
         _reject_unknown_keys(self.adapter_config, ADAPTER_KEYS, path="adapter")
+        self.active_defender_roles = _parse_defender_roles(
+            rospy.get_param(
+                "~active_defender_roles",
+                self.adapter_config.get("active_defender_roles", list(DEFENDER_ROLES)),
+            ),
+            name="active_defender_roles",
+        )
 
         self.output_frame = str(self.adapter_config.get("output_frame", "local"))
         if self.output_frame not in ("local", "world"):
@@ -175,15 +279,21 @@ class MpcRosAdapter:
         self.position_command_config = _section(self.model_config, "position_command")
         _reject_unknown_keys(self.position_command_config, POSITION_COMMAND_KEYS, path="position_command")
 
-        mpc_config_path = _resolve_config_path(str(self.adapter_config.get("mpc_config_path", "mpc_config.yaml")), self.model_config_dir)
-        self.engine = MpcEngine(config_path=mpc_config_path)
+        self.mpc_config_path = _resolve_config_path(str(self.adapter_config.get("mpc_config_path", "mpc_config.yaml")), self.model_config_dir)
+        self.mpc_environment = _load_mpc_environment(self.mpc_config_path)
+        self.engine = MpcEngine(config_path=self.mpc_config_path)
+        self.game_end_command_topic_overrides: Dict[str, str] = {}
+        self.game_end_monitor = self._build_game_end_monitor()
+        self.game_end_hover_published = False
 
         self.transforms = self._build_coordinate_transforms()
         self.states = self._build_default_states()
         self.subscribers = self._build_subscribers()
 
-        output_topic = str(rospy.get_param("~output_topic", self.adapter_config.get("output_topic", "/uav5/position_cmd")))
-        self.publisher = rospy.Publisher(output_topic, PositionCommand, queue_size=10)
+        self.output_topic = str(rospy.get_param("~output_topic", self.adapter_config.get("output_topic", "/uav2/position_cmd")))
+        self.publisher = rospy.Publisher(self.output_topic, PositionCommand, queue_size=10)
+        self.terminal_command_topics = self._build_terminal_command_topics(self.output_topic)
+        self.terminal_publishers = self._build_terminal_publishers()
         self.plan_point_enabled = bool(
             rospy.get_param("~plan_point_enabled", self.adapter_config.get("plan_point_enabled", True))
         )
@@ -198,7 +308,69 @@ class MpcRosAdapter:
             if self.plan_point_enabled
             else None
         )
-        self._log_startup_summary(model_config_path, output_topic)
+        self._log_startup_summary(model_config_path, self.output_topic)
+
+    def _build_game_end_monitor(self) -> GameEndMonitor:
+        game_config = _section(self.model_config, "game_end")
+        _reject_unknown_keys(game_config, GAME_END_KEYS, path="game_end")
+
+        enabled_param = _as_optional_bool(self.rospy.get_param("~game_end_enabled", "auto"))
+        enabled = _as_bool(game_config.get("enabled", False)) if enabled_param is None else enabled_param
+        command_topics = game_config.get("command_topics", {})
+        if not isinstance(command_topics, dict):
+            raise ValueError("game_end.command_topics 必须是 YAML mapping")
+        _reject_unknown_keys(command_topics, set(ALL_ROLES), path="game_end.command_topics")
+        self.game_end_command_topic_overrides = {
+            str(role): str(topic)
+            for role, topic in command_topics.items()
+            if str(topic)
+        }
+
+        configured_command_topics = self.rospy.get_param("~game_end_command_topics", None)
+        if configured_command_topics is not None:
+            if not isinstance(configured_command_topics, dict):
+                raise ValueError("~game_end_command_topics 必须是 YAML mapping")
+            _reject_unknown_keys(configured_command_topics, set(ALL_ROLES), path="~game_end_command_topics")
+            self.game_end_command_topic_overrides.update(
+                {
+                    str(role): str(topic)
+                    for role, topic in configured_command_topics.items()
+                    if str(topic)
+                }
+            )
+
+        if not enabled:
+            return GameEndMonitor(GameEndConfig(enabled=False))
+
+        bounds_config = game_config.get("world_bounds", {})
+        if not isinstance(bounds_config, dict):
+            raise ValueError("game_end.world_bounds 必须是 YAML mapping")
+        _reject_unknown_keys(bounds_config, WORLD_BOUNDS_KEYS, path="game_end.world_bounds")
+
+        asset_origin = game_config.get("asset_origin", self.mpc_environment.get("origin", [0.0, 0.0, 1.0]))
+        x_bounds = _as_optional_bounds(bounds_config.get("x"), name="game_end.world_bounds.x")
+        y_bounds = _as_optional_bounds(bounds_config.get("y"), name="game_end.world_bounds.y")
+        z_bounds = _as_optional_bounds(bounds_config.get("z"), name="game_end.world_bounds.z")
+        if x_bounds is None:
+            x_bounds = _env_axis_bounds(self.mpc_environment, "x")
+        if y_bounds is None:
+            y_bounds = _env_axis_bounds(self.mpc_environment, "y")
+        if z_bounds is None:
+            z_bounds = _env_axis_bounds(self.mpc_environment, "z")
+
+        return GameEndMonitor(
+            GameEndConfig(
+                enabled=True,
+                capture_distance_m=float(game_config.get("capture_distance_m", 1.0)),
+                asset_distance_m=float(game_config.get("asset_distance_m", 1.0)),
+                hold_duration_sec=float(game_config.get("hold_duration_sec", 0.5)),
+                asset_origin=_as_float3(asset_origin, name="game_end.asset_origin"),
+                x_bounds=x_bounds,
+                y_bounds=y_bounds,
+                z_bounds=z_bounds,
+                out_of_bounds_enabled=_as_bool(game_config.get("out_of_bounds_enabled", True)),
+            )
+        )
 
     def _log_startup_summary(self, model_config_path: str, output_topic: str) -> None:
         self.rospy.loginfo("mpc ROS adapter started")
@@ -210,6 +382,24 @@ class MpcRosAdapter:
             self.output_frame,
             self.output_frame_id,
         )
+        self.rospy.loginfo("active defender roles: %s", list(self.active_defender_roles))
+        if self.game_end_monitor.config.enabled:
+            cfg = self.game_end_monitor.config
+            self.rospy.loginfo(
+                "game end: enabled capture<%.3fm for %.3fs asset<%.3fm for %.3fs asset_origin=%s bounds(x=%s,y=%s,z=%s)",
+                cfg.capture_distance_m,
+                cfg.hold_duration_sec,
+                cfg.asset_distance_m,
+                cfg.hold_duration_sec,
+                [round(float(value), 6) for value in cfg.asset_origin.tolist()],
+                cfg.x_bounds,
+                cfg.y_bounds,
+                cfg.z_bounds,
+            )
+            for role in ALL_ROLES:
+                topic = self.terminal_command_topics.get(role, "")
+                if topic:
+                    self.rospy.loginfo("terminal hover output: role=%s topic=%s", role, self.rospy.resolve_name(topic))
         self._warn_if_output_frame_id_mismatch()
         if self.plan_point_enabled:
             self.rospy.loginfo(
@@ -329,6 +519,8 @@ class MpcRosAdapter:
             msg_type = str(entry.get("message_type", "auto"))
             if role not in ALL_ROLES:
                 raise ValueError(f"未知输入角色: {role}")
+            if role in DEFENDER_ROLES and role not in self.active_defender_roles:
+                continue
             if not topic:
                 raise ValueError(f"输入角色 {role} 缺少 topic")
             seen_roles.add(role)
@@ -341,17 +533,40 @@ class MpcRosAdapter:
                 subscribers.append(rospy.Subscriber(topic, rospy.AnyMsg, self._make_any_callback(role), queue_size=10))
             else:
                 raise ValueError(f"不支持的 message_type: {msg_type}")
-        missing = [role for role in ALL_ROLES if role not in seen_roles]
+        expected_roles = (ENEMY_ROLE,) + tuple(self.active_defender_roles)
+        missing = [role for role in expected_roles if role not in seen_roles]
         if missing:
             rospy.logwarn("inputs 缺少这些角色，将使用 defaults.states: %s", missing)
         return subscribers
+
+    def _build_terminal_command_topics(self, output_topic: str) -> Dict[str, str]:
+        topics: Dict[str, str] = {}
+        for role, (state_topic, _) in self.input_descriptions.items():
+            command_topic = _topic_to_position_cmd_topic(state_topic)
+            if command_topic:
+                topics[role] = command_topic
+
+        topics.update(self.game_end_command_topic_overrides)
+        topics[self.output_role] = output_topic
+        return {role: topic for role, topic in topics.items() if role in ALL_ROLES and topic}
+
+    def _build_terminal_publishers(self) -> Dict[str, Any]:
+        publishers: Dict[str, Any] = {}
+        topic_publishers: Dict[str, Any] = {self.output_topic: self.publisher}
+        for role, topic in self.terminal_command_topics.items():
+            publisher = topic_publishers.get(topic)
+            if publisher is None:
+                publisher = self.rospy.Publisher(topic, self.PositionCommand, queue_size=10)
+                topic_publishers[topic] = publisher
+            publishers[role] = publisher
+        return publishers
 
     def _auto_role_topics(self) -> Dict[str, str]:
         self_uav = _normalize_uav_name(
             self.rospy.get_param("~self_uav", self.rospy.get_namespace()),
             default="uav0",
         )
-        fleet_uavs = _parse_fleet_uavs(self.rospy.get_param("~fleet_uavs", "uav0,uav1,uav2,uav3,uav4"))
+        fleet_uavs = _parse_fleet_uavs(self.rospy.get_param("~fleet_uavs", "uav0,uav1,uav2"))
         if self_uav not in fleet_uavs:
             fleet_uavs.insert(0, self_uav)
 
@@ -360,6 +575,9 @@ class MpcRosAdapter:
             ENEMY_ROLE: f"/{self_uav}/vins_position",
         }
         for idx, role in enumerate(DEFENDER_ROLES):
+            if role not in self.active_defender_roles:
+                role_topics[role] = ""
+                continue
             if idx < len(defender_uavs):
                 role_topics[role] = f"/{defender_uavs[idx]}/vins_position"
             else:
@@ -419,7 +637,7 @@ class MpcRosAdapter:
         enemy_state = self._state_for_role(ENEMY_ROLE, now_sec)
         defenders = [
             VehicleState(position=self._state_for_role(role, now_sec).position, velocity=self._state_for_role(role, now_sec).velocity)
-            for role in DEFENDER_ROLES
+            for role in self.active_defender_roles
         ]
         return MpcSnapshot(
             enemy=VehicleState(position=enemy_state.position, velocity=enemy_state.velocity),
@@ -427,40 +645,87 @@ class MpcRosAdapter:
             step_count=int(self.rospy.get_time() * self.publish_rate_hz),
         )
 
-    def build_outputs(self, snapshot: MpcSnapshot):
-        result = self.engine.plan(snapshot)
-        target_world = result.predicted_position.copy()
-        velocity_world = result.velocity_xyz.copy()
-        target_world[2] = float(self.output_default_height)
-        if self.output_frame == "local":
-            output_transform = self.transforms[self.output_role]
-            target = output_transform.world_to_local_position(target_world)
-            target_velocity = output_transform.world_to_local_velocity(velocity_world)
-        else:
-            target = target_world.astype(np.float32)
-            target_velocity = velocity_world.astype(np.float32)
+    def _received_world_positions(self, now_sec: float) -> Dict[str, np.ndarray]:
+        positions: Dict[str, np.ndarray] = {}
+        for role in ALL_ROLES:
+            state = self._state_for_role(role, now_sec)
+            if state.received:
+                positions[role] = state.position.copy()
+        return positions
 
+    def update_game_end(self, now_sec: Optional[float] = None) -> GameEndStatus:
+        if now_sec is None:
+            now_sec = float(self.rospy.Time.now().to_sec())
+        return self.game_end_monitor.update(self._received_world_positions(now_sec), float(now_sec))
+
+    def _role_output_frame_id(self, role: str) -> str:
+        if self.output_frame == "local" and self.output_frame_id == self.output_role:
+            return role
+        return self.output_frame_id
+
+    def _convert_world_command_for_role(
+        self,
+        role: str,
+        position_world: np.ndarray,
+        velocity_world: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if self.output_frame == "local":
+            output_transform = self.transforms[role]
+            return (
+                output_transform.world_to_local_position(position_world),
+                output_transform.world_to_local_velocity(velocity_world),
+            )
+        return position_world.astype(np.float32), velocity_world.astype(np.float32)
+
+    def _make_position_command(
+        self,
+        position: np.ndarray,
+        velocity: np.ndarray,
+        *,
+        frame_id: str,
+        yaw: Optional[float] = None,
+    ):
         msg = self.PositionCommand()
         msg.header.stamp = self.rospy.Time.now()
-        msg.header.frame_id = self.output_frame_id
-        msg.position.x = float(target[0])
-        msg.position.y = float(target[1])
-        msg.position.z = float(target[2])
-        msg.velocity.x = float(target_velocity[0])
-        msg.velocity.y = float(target_velocity[1])
-        msg.velocity.z = float(self.output_velocity_z)
+        msg.header.frame_id = frame_id
+        msg.position.x = float(position[0])
+        msg.position.y = float(position[1])
+        msg.position.z = float(position[2])
+        msg.velocity.x = float(velocity[0])
+        msg.velocity.y = float(velocity[1])
+        msg.velocity.z = float(velocity[2])
         msg.acceleration.x = 0.0
         msg.acceleration.y = 0.0
         msg.acceleration.z = 0.0
         msg.jerk.x = 0.0
         msg.jerk.y = 0.0
         msg.jerk.z = 0.0
-        msg.yaw = float(self.position_command_config.get("yaw", result.yaw_rad))
+        msg.yaw = float(self.position_command_config.get("yaw", 0.0) if yaw is None else yaw)
         msg.yaw_dot = float(self.position_command_config.get("yaw_dot", 0.0))
         msg.kx = [float(v) for v in self.position_command_config.get("kx", [5.7, 5.7, 6.2])]
         msg.kv = [float(v) for v in self.position_command_config.get("kv", [3.4, 3.4, 4.0])]
         msg.trajectory_id = int(self.position_command_config.get("trajectory_id", 1))
         msg.trajectory_flag = self.PositionCommand.TRAJECTORY_STATUS_READY
+        return msg
+
+    def build_outputs(self, snapshot: MpcSnapshot):
+        result = self.engine.plan(snapshot)
+        target_world = result.predicted_position.copy()
+        velocity_world = result.velocity_xyz.copy()
+        target_world[2] = float(self.output_default_height)
+        target, target_velocity = self._convert_world_command_for_role(
+            self.output_role,
+            target_world,
+            velocity_world,
+        )
+        target_velocity[2] = float(self.output_velocity_z)
+
+        msg = self._make_position_command(
+            target,
+            target_velocity,
+            frame_id=self.output_frame_id,
+            yaw=result.yaw_rad,
+        )
 
         plan_point = None
         if self.plan_point_enabled:
@@ -474,10 +739,60 @@ class MpcRosAdapter:
 
         return msg, plan_point
 
+    def publish_terminal_hover_once(self, status: GameEndStatus) -> None:
+        if self.game_end_hover_published:
+            return
+
+        now_sec = float(self.rospy.Time.now().to_sec())
+        missing_roles: List[str] = []
+        published_roles: List[str] = []
+        for role in ALL_ROLES:
+            publisher = self.terminal_publishers.get(role)
+            if publisher is None:
+                missing_roles.append(role)
+                continue
+
+            state = self._state_for_role(role, now_sec)
+            if not state.received:
+                missing_roles.append(role)
+                continue
+
+            position, velocity = self._convert_world_command_for_role(
+                role,
+                state.position.copy(),
+                np.zeros((3,), dtype=np.float32),
+            )
+            msg = self._make_position_command(
+                position,
+                velocity,
+                frame_id=self._role_output_frame_id(role),
+            )
+            publisher.publish(msg)
+            published_roles.append(role)
+
+        self.game_end_hover_published = True
+        self.rospy.logwarn(
+            "MPC game ended: outcome=%s reason=%s trigger_roles=%s trigger_distance=%s. "
+            "Published terminal hover for roles=%s",
+            status.outcome,
+            status.reason,
+            list(status.trigger_roles),
+            "n/a" if status.trigger_distance_m is None else f"{status.trigger_distance_m:.3f}",
+            published_roles,
+        )
+        if missing_roles:
+            self.rospy.logwarn("terminal hover skipped roles without publisher or received state: %s", missing_roles)
+
     def spin(self) -> None:
         rate = self.rospy.Rate(self.publish_rate_hz)
         while not self.rospy.is_shutdown():
             try:
+                game_end_status = self.update_game_end()
+                if game_end_status.active:
+                    self.publish_terminal_hover_once(game_end_status)
+                    rate.sleep()
+                    continue
+
                 position_command, plan_point = self.build_outputs(self.build_snapshot())
                 self.publisher.publish(position_command)
                 if plan_point is not None and self.plan_point_publisher is not None:

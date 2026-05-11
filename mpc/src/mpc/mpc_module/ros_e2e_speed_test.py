@@ -55,6 +55,10 @@ def _write_limit_config(config: dict, source_model_config_path: str, adapter_rat
     limit_config = copy.deepcopy(config)
     adapter = _section(limit_config, "adapter")
     adapter["publish_rate_hz"] = float(adapter_rate)
+    game_end = limit_config.get("game_end", {})
+    if isinstance(game_end, dict):
+        game_end["enabled"] = False
+        limit_config["game_end"] = game_end
     source_dir = Path(source_model_config_path).resolve().parent
     adapter["mpc_config_path"] = _resolve_relative_path(str(adapter.get("mpc_config_path", "mpc_config.yaml")), source_dir)
     tmp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix="_mpc_model_config.yaml", delete=False)

@@ -33,12 +33,12 @@ engine = InferenceEngine()
 
 snapshot = InferenceSnapshot(
     defenders=[
-        VehicleState(position=[1.0, 1.2, -14.0], velocity=[0.0, 0.0, 0.0]),
-        VehicleState(position=[-1.4, 0.8, -14.0], velocity=[0.0, 0.0, 0.0]),
-        VehicleState(position=[0.6, -1.5, -14.0], velocity=[0.0, 0.0, 0.0]),
-        VehicleState(position=[-0.9, -1.0, -14.0], velocity=[0.0, 0.0, 0.0]),
+        VehicleState(position=[1.0, 1.2, 1.0], velocity=[0.0, 0.0, 0.0]),
+        VehicleState(position=[-1.4, 0.8, 1.0], velocity=[0.0, 0.0, 0.0]),
+        VehicleState(position=[0.6, -1.5, 1.0], velocity=[0.0, 0.0, 0.0]),
+        VehicleState(position=[-0.9, -1.0, 1.0], velocity=[0.0, 0.0, 0.0]),
     ],
-    enemy=VehicleState(position=[28.0, 12.0, -14.0], velocity=[-4.0, -1.2, 0.0]),
+    enemy=VehicleState(position=[28.0, 12.0, 1.0], velocity=[-4.0, -1.2, 0.0]),
     step_count=0,
 )
 
@@ -118,6 +118,25 @@ UAV_NAME=uav4 roslaunch adv adv.launch enemy_uav:=uav2 fleet_uavs:=uav0,uav1,uav
 maps `enemy <- /uav2/vins_position` and `defender_2 <- /uav4/vins_position`;
 the ADV instance on `uav4` automatically publishes the `defender_2` command to
 `/uav4/position_cmd`.
+
+### Game End Handling
+
+The adapter can stop the match from `model_config.yaml` `game_end` settings:
+
+- defender win: enemy is within `capture_distance_m` of any defender in 3D for
+  `hold_duration_sec`
+- enemy win: enemy is within `asset_distance_m` horizontal distance of the
+  critical asset for `hold_duration_sec`
+- experiment failed: any received aircraft state leaves the configured world
+  bounds
+
+The critical asset position is loaded from ADV `inference_config.yaml`
+`inference.origin`. Default world bounds are loaded from ADV
+`inference_config.yaml` `safety.bounds`. MPC keeps its own independent
+`mpc_config.yaml` `environment.origin`.
+When a terminal state is triggered, ADV publishes one current-position
+`PositionCommand` to every mapped UAV command topic and then stops publishing
+normal strategy commands.
 
 Or pass a different model config through a private ROS parameter:
 

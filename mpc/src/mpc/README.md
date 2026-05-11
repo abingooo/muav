@@ -83,6 +83,25 @@ inputs. The converted plan point is published to
 `/${UAV_NAME}/toplan/single_plan_point`, matching core's
 `geometry_msgs/PoseStamped` plan-point input.
 
+### Game End Handling
+
+The adapter can stop the match from `model_config.yaml` `game_end` settings:
+
+- defender win: enemy is within `capture_distance_m` of any defender in 3D for
+  `hold_duration_sec`
+- enemy win: enemy is within `asset_distance_m` horizontal distance of the
+  critical asset for `hold_duration_sec`
+- experiment failed: any received aircraft state leaves the configured world
+  bounds
+
+The critical asset position is loaded from MPC `mpc_config.yaml`
+`environment.origin`. Default world bounds are loaded from MPC
+`mpc_config.yaml` `environment.x_min`, `x_max`, `y_min`, and `y_max`.
+ADV keeps its own independent `inference_config.yaml` `inference.origin`.
+When a terminal state is triggered, MPC publishes one current-position
+`PositionCommand` to every mapped UAV command topic and then stops publishing
+normal strategy commands.
+
 ## Tests
 
 Run `roscore` first.

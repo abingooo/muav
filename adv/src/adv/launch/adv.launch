@@ -1,14 +1,16 @@
 <launch>
   <arg name="model_config" default="$(find adv)/adv_module/model_config.yaml"/>
-  <arg name="self_uav" default="$(optenv UAV_NAME uav)"/>
+  <arg name="self_uav" default="$(optenv UAV_NAME uav0)"/>
   <arg name="core_namespace" default="$(arg self_uav)"/>
-  <arg name="fleet_uavs" default="uav0,uav1,uav2,uav3,uav4"/>
-  <arg name="enemy_uav" default=""/>
+  <arg name="fleet_uavs" default="uav0,uav1,uav2"/>
+  <arg name="enemy_uav" default="uav2"/>
+  <arg name="active_defender_roles" default="defender_0,defender_1"/>
   <arg name="node_name" default="adv_$(arg self_uav)_adapter"/>
   <arg name="output_role" default="auto"/>
   <arg name="output_topic" default="/$(arg self_uav)/position_cmd"/>
   <arg name="publish_plan_point" default="true"/>
   <arg name="plan_point_topic" default="/$(arg core_namespace)/toplan/single_plan_point"/>
+  <arg name="game_end_enabled" default="auto"/>
 
   <node pkg="adv" type="adv_ros_adapter" name="$(arg node_name)" ns="/$(arg self_uav)" output="screen">
     <param name="model_config" value="$(arg model_config)"/>
@@ -16,9 +18,11 @@
     <param name="self_uav" value="$(arg self_uav)"/>
     <param name="fleet_uavs" value="$(arg fleet_uavs)"/>
     <param name="enemy_uav" value="$(arg enemy_uav)"/>
+    <param name="active_defender_roles" value="$(arg active_defender_roles)"/>
     <param name="output_role" value="$(arg output_role)"/>
     <param name="output_topic" value="$(arg output_topic)"/>
     <param name="plan_point_enabled" value="$(arg publish_plan_point)"/>
     <param name="plan_point_topic" value="$(arg plan_point_topic)"/>
+    <param name="game_end_enabled" value="$(arg game_end_enabled)"/>
   </node>
 </launch>

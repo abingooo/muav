@@ -297,10 +297,20 @@ class InferenceSnapshot:
     defenders: List[VehicleState]
     enemy: VehicleState
     step_count: int = 0
+    active_defender_indices: Tuple[int, ...] = (0, 1, 2, 3)
 
     def __post_init__(self) -> None:
         if len(self.defenders) != 4:
             raise ValueError(f"当前模型固定支持 4 架 defender，实际得到 {len(self.defenders)}")
+        indices = tuple(int(idx) for idx in self.active_defender_indices)
+        if not indices:
+            raise ValueError("active_defender_indices 至少需要包含一架 defender")
+        if len(set(indices)) != len(indices):
+            raise ValueError(f"active_defender_indices 不能重复: {indices}")
+        for idx in indices:
+            if idx < 0 or idx >= len(self.defenders):
+                raise ValueError(f"active_defender_indices 包含非法索引 {idx}")
+        self.active_defender_indices = indices
 
 
 @dataclass
@@ -337,7 +347,7 @@ class InferenceConfig:
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH
     device: str = str(_cfg(_RUNTIME_CONFIG, "inference", "device", "auto"))
     defender_names: Tuple[str, ...] = tuple(_cfg(_RUNTIME_CONFIG, "inference", "defender_names", ("Drone1", "Drone2", "Drone3", "Drone4")))
-    origin: Tuple[float, float, float] = tuple(_cfg(_RUNTIME_CONFIG, "inference", "origin", (0.0, 0.0, -14.0)))
+    origin: Tuple[float, float, float] = tuple(_cfg(_RUNTIME_CONFIG, "inference", "origin", (0.0, 0.0, 1.0)))
     obs_dim: int = int(_cfg(_RUNTIME_CONFIG, "inference", "obs_dim", 25))
     act_dim: int = int(_cfg(_RUNTIME_CONFIG, "inference", "act_dim", 2))
     shared_actor: bool = bool(_cfg(_RUNTIME_CONFIG, "inference", "shared_actor", True))
@@ -377,7 +387,7 @@ class InferenceConfig:
             checkpoint_path=_resolve_path(str(inference.get("checkpoint_path", "policy_checkpoint.pt")), base_dir),
             device=str(inference.get("device", "auto")),
             defender_names=tuple(inference.get("defender_names", ("Drone1", "Drone2", "Drone3", "Drone4"))),
-            origin=tuple(inference.get("origin", (0.0, 0.0, -14.0))),
+            origin=tuple(inference.get("origin", (0.0, 0.0, 1.0))),
             obs_dim=int(inference.get("obs_dim", 25)),
             act_dim=int(inference.get("act_dim", 2)),
             shared_actor=bool(inference.get("shared_actor", True)),
@@ -576,6 +586,7 @@ class RolePlanner:
         def_pos: np.ndarray,
         enemy_pos: np.ndarray,
         step_count: int,
+        active_indices: Sequence[int],
     ) -> bool:
         if self.current_role_refresh_step < 0:
             return False
@@ -597,7 +608,7 @@ class RolePlanner:
         gate_bad = 0
         attack_bad = 0
 
-        for idx in range(len(def_xy)):
+        for idx in active_indices:
             slot_name = str(self.current_slot_names[idx]) if idx < len(self.current_slot_names) else ""
             slot_err = float(np.linalg.norm(def_xy[idx] - self.current_slot_targets[idx]))
             rel = (def_xy[idx] - enemy_xy).astype(np.float32)
@@ -615,7 +626,9 @@ class RolePlanner:
 
     def refresh(self, snapshot: InferenceSnapshot, force: bool = False) -> RoleAssignment:
         step_count = int(snapshot.step_count)
-        def_pos = np.stack([d.position for d in snapshot.defenders], axis=0).astype(np.float32)
+        active_indices = tuple(snapshot.active_defender_indices)
+        def_pos_all = np.stack([d.position for d in snapshot.defenders], axis=0).astype(np.float32)
+        def_pos = def_pos_all[list(active_indices)]
         enemy_pos = snapshot.enemy.position.astype(np.float32)
         enemy_vel = snapshot.enemy.velocity.astype(np.float32)
 
@@ -629,7 +642,7 @@ class RolePlanner:
                 need_refresh = True
             elif hold_age >= int(ROLE_HOLD_STEPS if not kill_mode_next else ROLE_KILL_HOLD_STEPS):
                 need_refresh = True
-            elif self._should_break_role_hold(def_pos, enemy_pos, step_count):
+            elif self._should_break_role_hold(def_pos_all, enemy_pos, step_count, active_indices):
                 need_refresh = True
 
         if need_refresh:
@@ -639,13 +652,14 @@ class RolePlanner:
 
             roles = np.zeros((4,), dtype=np.int64)
             sides = np.zeros((4,), dtype=np.int64)
-            targets = np.zeros((4, 2), dtype=np.float32)
-            names: List[str] = []
-            for i, slot_idx in enumerate(perm):
-                roles[i] = int(slot_roles[slot_idx])
-                sides[i] = int(slot_sides[slot_idx])
-                targets[i] = np.asarray(slots[slot_idx], dtype=np.float32)
-                names.append(str(slot_names[slot_idx]))
+            targets = def_pos_all[:, :2].astype(np.float32).copy()
+            names: List[str] = ["inactive"] * 4
+            for local_idx, slot_idx in enumerate(perm):
+                idx = int(active_indices[local_idx])
+                roles[idx] = int(slot_roles[slot_idx])
+                sides[idx] = int(slot_sides[slot_idx])
+                targets[idx] = np.asarray(slots[slot_idx], dtype=np.float32)
+                names[idx] = str(slot_names[slot_idx])
 
             self.current_roles = roles
             self.current_sides = sides
@@ -673,6 +687,7 @@ class ObservationBuilder:
         def_v = np.stack([d.velocity for d in snapshot.defenders], axis=0).astype(np.float32)
         e_p = snapshot.enemy.position.astype(np.float32)
         e_to_o = self.config.origin_array - e_p
+        active_set = set(int(idx) for idx in snapshot.active_defender_indices)
 
         origin_xy = self.config.origin_xy.astype(np.float32)
         enemy_xy = e_p[:2].astype(np.float32)
@@ -691,6 +706,9 @@ class ObservationBuilder:
             rels: List[float] = []
             for j in range(4):
                 if j == i:
+                    continue
+                if j not in active_set:
+                    rels.extend([0.0, 0.0])
                     continue
                 dij = (def_p[j] - def_p[i]) / float(self.config.pos_scale)
                 rels.extend([float(dij[0]), float(dij[1])])
@@ -740,9 +758,17 @@ class CommandPostprocessor:
             return fb / (fb_norm + 1e-12)
         return np.array([1.0, 0.0], dtype=np.float32)
 
-    def _apply_safety(self, index: int, vx: float, vy: float, def_pos: np.ndarray) -> Tuple[float, float]:
+    def _apply_safety(
+        self,
+        index: int,
+        vx: float,
+        vy: float,
+        def_pos: np.ndarray,
+        active_indices: Optional[Sequence[int]] = None,
+    ) -> Tuple[float, float]:
         pi = def_pos[index]
-        for j in range(len(def_pos)):
+        active_iter = range(len(def_pos)) if active_indices is None else active_indices
+        for j in active_iter:
             if j == index:
                 continue
             pj = def_pos[j]
@@ -869,7 +895,7 @@ class CommandPostprocessor:
 
             vx, vy = float(a_eff[0] * vmax_local), float(a_eff[1] * vmax_local)
             if self.config.apply_safety_guard:
-                vx, vy = self._apply_safety(i, vx, vy, def_pos)
+                vx, vy = self._apply_safety(i, vx, vy, def_pos, snapshot.active_defender_indices)
             vx, vy = clip_vec2(vx, vy, vmax_local)
             vz = self._hold_alt_vz(float(p[2]), float(v[2]), self.config.target_altitude_z)
 

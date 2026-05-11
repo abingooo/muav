@@ -3,7 +3,7 @@
 
 adapter:
   # 原生输出 quadrotor_msgs/PositionCommand 的话题。
-  output_topic: /uav5/position_cmd
+  output_topic: /uav2/position_cmd
   # 可选：同时输出 geometry_msgs/PoseStamped，接 core 的 toplan/single_plan_point。
   plan_point_enabled: true
   plan_point_topic: /toplan/single_plan_point
@@ -19,6 +19,8 @@ adapter:
   publish_rate_hz: 20.0
   stale_timeout_sec: 0.5
   mpc_config_path: mpc_config.yaml
+  # 当前实验只启用两架防守机：uav0 -> defender_0, uav1 -> defender_1。
+  active_defender_roles: [defender_0, defender_1]
 
 position_command:
   kx: [5.7, 5.7, 6.2]
@@ -31,13 +33,13 @@ defaults:
   # 输入话题还没收到时，各角色使用的默认状态。position/velocity 在对应 UAV 本地坐标系下。
   states:
     enemy:
-      position: [5.0, 0.0, 1.0]
+      position: [0.0, 0.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     defender_0:
-      position: [1.0, 0.0, 1.0]
+      position: [0.0, 0.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     defender_1:
-      position: [0.5, 1.0, 1.0]
+      position: [0.0, 0.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     defender_2:
       position: [0.5, -1.0, 1.0]
@@ -50,6 +52,8 @@ coordinate_transforms:
   # local_to_world 定义：world_position = Rz(yaw_deg) * local_position + translation
   # velocity 只做旋转，不加 translation。
   # yaw_deg 逆时针为正，顺时针为负。
+  # 当前实验世界范围：x[-8.1, 4.5], y[-4.5, 4.5], z[0.0, 3.0]。
+  # enemy 本地 x 与世界 x 同向；drone0/drone1 本地 x 与世界 x 反向。
   enemy:
     translation: [-8.1, 0.0, 0.0]
     yaw_deg: 0.0
@@ -60,16 +64,16 @@ coordinate_transforms:
     translation: [0.0, 1.5, 0.0]
     yaw_deg: 180.0
   defender_2:
-    translation: [100.0, 0.0, 0.0]
-    yaw_deg: 180.0
+    translation: [0.0, 0.0, 0.0]
+    yaw_deg: 0.0
   defender_3:
-    translation: [100.0, 1.0, 0.0]
-    yaw_deg: 180.0
+    translation: [0.0, 0.0, 0.0]
+    yaw_deg: 0.0
 
 inputs:
   # message_type 支持 auto / nav_msgs/Odometry / geometry_msgs/PointStamped。
   - role: enemy
-    topic: /uav5/vins_position
+    topic: /uav2/vins_position
     message_type: auto
   - role: defender_0
     topic: /uav0/vins_position
@@ -77,9 +81,25 @@ inputs:
   - role: defender_1
     topic: /uav1/vins_position
     message_type: auto
-  - role: defender_2
-    topic: /uav2/vins_position
-    message_type: auto
-  - role: defender_3
-    topic: /uav3/vins_position
-    message_type: auto
+
+game_end:
+  # 终局判定开关。launch 可用 game_end_enabled 覆盖。
+  enabled: true
+  # 资产坐标默认从 MPC 的 mpc_config.yaml 读取 environment.origin。
+  # 世界边界默认从 MPC 的 mpc_config.yaml 读取 environment.x_min/x_max/y_min/y_max。
+  # 防守机与敌机三维距离小于该值并持续 hold_duration_sec，防守机获胜。
+  capture_distance_m: 1.0
+  # 敌机与关键资产水平距离小于该值并持续 hold_duration_sec，敌机获胜。
+  asset_distance_m: 1.0
+  hold_duration_sec: 0.5
+  # 任意已收到状态的飞机越出 world_bounds 就判定实验失败。
+  out_of_bounds_enabled: true
+  # 世界坐标范围，终局越界判定直接使用这里的显式配置。
+  world_bounds:
+    x: [-8.1, 4.5]
+    y: [-4.5, 4.5]
+    z: [0.0, 3.0]
+  # 终局后 MPC 会向所有映射飞机的 /position_cmd 发布一次当前位置悬停命令。
+  # 默认由 inputs 的 /uavX/vins_position 自动推导 /uavX/position_cmd；
+  # 特殊话题可在这里按 role 覆盖。
+  command_topics: {}

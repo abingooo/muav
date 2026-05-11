@@ -29,15 +29,17 @@ adapter:
   estimate_velocity_from_position: true
   # 推理核心参数文件。
   inference_config_path: inference_config.yaml
+  # 当前实验只启用两架防守机：uav0 -> defender_0, uav1 -> defender_1。
+  active_defender_roles: [defender_0, defender_1]
 
 defaults:
   # 输入话题还没收到时，各角色使用的默认状态。这里的 position/velocity 在对应 UAV 的本地坐标系下。
   states:
     defender_0:
-      position: [1.0, 1.2, 1.0]
+      position: [0.0, 0.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     defender_1:
-      position: [-1.4, 0.8, 1.0]
+      position: [0.0, 0.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     defender_2:
       position: [0.6, -1.5, 1.0]
@@ -46,8 +48,8 @@ defaults:
       position: [-0.9, -1.0, 1.0]
       velocity: [0.0, 0.0, 0.0]
     enemy:
-      position: [28.0, 12.0, 1.0]
-      velocity: [-4.0, -1.2, 0.0]
+      position: [0.0, 0.0, 1.0]
+      velocity: [0.0, 0.0, 0.0]
 
 coordinate_transforms:
   # local_to_world 定义：world_position = Rz(yaw_deg) * local_position + translation
@@ -57,12 +59,13 @@ coordinate_transforms:
   # yaw_deg 遵循右手坐标系：逆时针为正，顺时针为负。
   # 例如 yaw_deg: 90 表示本地 x 正方向会转到 ADV 世界 y 正方向。
   # 如果现场量到的是顺时针 30 度，这里应填写 yaw_deg: -30。
+  # 当前实验世界范围：x[-8.1, 4.5], y[-4.5, 4.5], z[0.0, 3.0]。
   defender_0:
-    translation: [0.0, 0.0, 0.0]
-    yaw_deg: 0.0
+    translation: [0.0, 1.5, 0.0]
+    yaw_deg: 180.0
   defender_1:
-    translation: [0.0, 0.0, 0.0]
-    yaw_deg: 0.0
+    translation: [0.0, 1.5, 0.0]
+    yaw_deg: 180.0
   defender_2:
     translation: [0.0, 0.0, 0.0]
     yaw_deg: 0.0
@@ -70,7 +73,7 @@ coordinate_transforms:
     translation: [0.0, 0.0, 0.0]
     yaw_deg: 0.0
   enemy:
-    translation: [0.0, 0.0, 0.0]
+    translation: [-8.1, 0.0, 0.0]
     yaw_deg: 0.0
 
 inputs:
@@ -82,14 +85,8 @@ inputs:
   - role: defender_1
     topic: /uav1/vins_position
     message_type: auto
-  - role: defender_2
-    topic: /uav2/vins_position
-    message_type: auto
-  - role: defender_3
-    topic: /uav3/vins_position
-    message_type: auto
   - role: enemy
-    topic: /uav5/vins_position
+    topic: /uav2/vins_position
     message_type: auto
 
 position_command:
@@ -99,3 +96,25 @@ position_command:
   yaw: 0.0
   yaw_dot: 0.0
   trajectory_id: 1
+
+game_end:
+  # 终局判定开关。launch 可用 game_end_enabled 覆盖。
+  enabled: true
+  # 资产坐标默认从 ADV 的 inference_config.yaml 读取 inference.origin。
+  # 世界边界默认从 ADV 的 inference_config.yaml 读取 safety.bounds。
+  # 防守机与敌机三维距离小于该值并持续 hold_duration_sec，防守机获胜。
+  capture_distance_m: 1.0
+  # 敌机与关键资产水平距离小于该值并持续 hold_duration_sec，敌机获胜。
+  asset_distance_m: 1.0
+  hold_duration_sec: 0.5
+  # 任意已收到状态的飞机越出 world_bounds 就判定实验失败。
+  out_of_bounds_enabled: true
+  # 世界坐标范围，终局越界判定直接使用这里的显式配置。
+  world_bounds:
+    x: [-8.1, 4.5]
+    y: [-4.5, 4.5]
+    z: [0.0, 3.0]
+  # 终局后 ADV 会向所有映射飞机的 /position_cmd 发布一次当前位置悬停命令。
+  # 默认由 inputs 的 /uavX/vins_position 自动推导 /uavX/position_cmd；
+  # 特殊话题可在这里按 role 覆盖。
+  command_topics: {}

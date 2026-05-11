@@ -8,8 +8,8 @@ inference:
   device: auto
   # defender_names 的数量必须为 4，顺序对应输入 snapshot.defenders。
   defender_names: [Drone1, Drone2, Drone3, Drone4]
-  # 防守目标/原点位置，z 通常也是默认巡航高度。
-  origin: [0.0, 0.0, -14.0]
+  # 防守目标/关键资产位置，z 通常也是默认巡航高度。
+  origin: [0.0, 0.0, 1.0]
   obs_dim: 25
   act_dim: 2
   shared_actor: true
@@ -77,9 +77,10 @@ safety:
   # 防碰撞和场地边界保护。
   repulse_range: 5.0
   repulse_gain: 6.5
-  boundary_margin: 22.0
+  boundary_margin: 0.8
   boundary_gain: 5.0
+  # ADV 世界坐标范围：x[-8.1, 4.5], y[-4.5, 4.5], z[0.0, 3.0]。
   bounds:
-    x: [-95.0, 95.0]
-    y: [-95.0, 95.0]
-    z: [-40.0, -4.0]
+    x: [-8.1, 4.5]
+    y: [-4.5, 4.5]
+    z: [0.0, 3.0]

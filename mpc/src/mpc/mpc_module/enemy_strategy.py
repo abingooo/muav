@@ -212,8 +212,10 @@ class EnemyStrategyMPC:
 
     def _enemy_boundary_cost(self, xy: np.ndarray, margin: float) -> float:
         margin = max(1.0, float(margin))
-        nx = max(0.0, abs(float(xy[0])) - (self.x_max - margin)) / margin
-        ny = max(0.0, abs(float(xy[1])) - (self.y_max - margin)) / margin
+        x = float(xy[0])
+        y = float(xy[1])
+        nx = max(0.0, (self.x_min + margin) - x, x - (self.x_max - margin)) / margin
+        ny = max(0.0, (self.y_min + margin) - y, y - (self.y_max - margin)) / margin
         return float(min(2.0, nx + ny))
 
     def _enemy_surround_risk(self, enemy_xy: np.ndarray, def_xy: np.ndarray, radius: float) -> float:

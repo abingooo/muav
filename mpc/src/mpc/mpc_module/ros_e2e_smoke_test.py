@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import sys
+import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+import yaml
 
 from .ros_adapter import ALL_ROLES, DEFAULT_MODEL_CONFIG_PATH, MpcRosAdapter, _as_float3, _load_yaml, _section
 
@@ -89,6 +94,28 @@ def _is_finite_pose(msg) -> bool:
     )
 
 
+def _resolve_relative_path(path: str, base_dir: Path) -> str:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return str(candidate)
+    return str(base_dir / candidate)
+
+
+def _write_smoke_config(config: dict, source_model_config_path: str) -> str:
+    smoke_config = copy.deepcopy(config)
+    game_end = smoke_config.get("game_end", {})
+    if isinstance(game_end, dict):
+        game_end["enabled"] = False
+        smoke_config["game_end"] = game_end
+    adapter = _section(smoke_config, "adapter")
+    source_dir = Path(source_model_config_path).resolve().parent
+    adapter["mpc_config_path"] = _resolve_relative_path(str(adapter.get("mpc_config_path", "mpc_config.yaml")), source_dir)
+    tmp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix="_mpc_smoke_model_config.yaml", delete=False)
+    with tmp:
+        yaml.safe_dump(smoke_config, tmp, allow_unicode=True, sort_keys=False)
+    return tmp.name
+
+
 def _start_adapter_thread(model_config_path: str):
     adapter = MpcRosAdapter(model_config_path=model_config_path)
     thread = threading.Thread(target=adapter.spin, name="mpc_adapter_smoke", daemon=True)
@@ -111,7 +138,7 @@ def main() -> int:
 
     rospy.init_node("mpc_ros_e2e_smoke_test", anonymous=True)
     if not args.no_start_adapter:
-        _start_adapter_thread(args.model_config)
+        _start_adapter_thread(_write_smoke_config(config, args.model_config))
         rospy.sleep(1.0)
 
     msg_cls = PointStamped if args.message_type == "point" else Odometry
