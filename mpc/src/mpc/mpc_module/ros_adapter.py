@@ -238,6 +238,46 @@ def _env_axis_bounds(environment: Dict[str, Any], axis: str) -> Optional[Tuple[f
     return _as_optional_bounds([environment[lower_key], environment[upper_key]], name=f"mpc_config.environment.{axis}")
 
 
+def _clamp_world_xy_to_environment(position_world: np.ndarray, environment: Dict[str, Any]) -> np.ndarray:
+    out = position_world.astype(np.float32).copy()
+    x_bounds = _env_axis_bounds(environment, "x")
+    y_bounds = _env_axis_bounds(environment, "y")
+    if x_bounds is not None:
+        out[0] = float(np.clip(out[0], x_bounds[0], x_bounds[1]))
+    if y_bounds is not None:
+        out[1] = float(np.clip(out[1], y_bounds[0], y_bounds[1]))
+    return out
+
+
+def _build_lookahead_plan_point_world(
+    current_position_world: np.ndarray,
+    predicted_position_world: np.ndarray,
+    velocity_world: np.ndarray,
+    *,
+    lookahead_m: float,
+    output_height: float,
+    environment: Dict[str, Any],
+) -> np.ndarray:
+    if lookahead_m <= 0.0:
+        plan_point_world = predicted_position_world.astype(np.float32).copy()
+        plan_point_world[2] = float(output_height)
+        return _clamp_world_xy_to_environment(plan_point_world, environment)
+
+    direction_xy = velocity_world[:2].astype(np.float32)
+    norm_xy = float(np.linalg.norm(direction_xy))
+    if norm_xy <= 1e-6:
+        direction_xy = (predicted_position_world[:2] - current_position_world[:2]).astype(np.float32)
+        norm_xy = float(np.linalg.norm(direction_xy))
+
+    if norm_xy <= 1e-6:
+        plan_point_world = predicted_position_world.astype(np.float32).copy()
+    else:
+        plan_point_world = current_position_world.astype(np.float32).copy()
+        plan_point_world[:2] += direction_xy / norm_xy * float(lookahead_m)
+    plan_point_world[2] = float(output_height)
+    return _clamp_world_xy_to_environment(plan_point_world, environment)
+
+
 class MpcRosAdapter:
     def __init__(self, model_config_path: str = DEFAULT_MODEL_CONFIG_PATH):
         import rospy
@@ -281,6 +321,7 @@ class MpcRosAdapter:
 
         self.mpc_config_path = _resolve_config_path(str(self.adapter_config.get("mpc_config_path", "mpc_config.yaml")), self.model_config_dir)
         self.mpc_environment = _load_mpc_environment(self.mpc_config_path)
+        self.plan_point_lookahead_m = max(0.0, float(self.mpc_environment.get("plan_point_lookahead_m", 1.0)))
         self.engine = MpcEngine(config_path=self.mpc_config_path)
         self.game_end_command_topic_overrides: Dict[str, str] = {}
         self.game_end_monitor = self._build_game_end_monitor()
@@ -410,10 +451,11 @@ class MpcRosAdapter:
             if self.plan_point_frame_id != self.output_frame_id:
                 self.rospy.logwarn(
                     "plan_point_frame_id (%s) 与 output_frame_id (%s) 不一致；"
-                    "plan_point 复用 PositionCommand 坐标，通常应保持一致",
+                    "plan_point 使用 MPC 前视点坐标，通常应保持一致",
                     self.plan_point_frame_id,
                     self.output_frame_id,
                 )
+            self.rospy.loginfo("plan point lookahead: %.3fm", self.plan_point_lookahead_m)
 
         for role in ALL_ROLES:
             topic, msg_type = self.input_descriptions.get(role, ("", "defaults.states"))
@@ -729,12 +771,25 @@ class MpcRosAdapter:
 
         plan_point = None
         if self.plan_point_enabled:
+            plan_point_world = _build_lookahead_plan_point_world(
+                snapshot.enemy.position,
+                target_world,
+                velocity_world,
+                lookahead_m=self.plan_point_lookahead_m,
+                output_height=self.output_default_height,
+                environment=self.mpc_environment,
+            )
+            plan_point_position, _ = self._convert_world_command_for_role(
+                self.output_role,
+                plan_point_world,
+                velocity_world,
+            )
             plan_point = self.PoseStamped()
             plan_point.header.stamp = msg.header.stamp
             plan_point.header.frame_id = self.plan_point_frame_id
-            plan_point.pose.position.x = msg.position.x
-            plan_point.pose.position.y = msg.position.y
-            plan_point.pose.position.z = msg.position.z
+            plan_point.pose.position.x = float(plan_point_position[0])
+            plan_point.pose.position.y = float(plan_point_position[1])
+            plan_point.pose.position.z = float(plan_point_position[2])
             plan_point.pose.orientation.w = 1.0
 
         return msg, plan_point

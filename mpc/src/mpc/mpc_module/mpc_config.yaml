@@ -8,8 +8,8 @@ environment:
   - 0.0
   - 0.0
   - 1.0
-  # MPC 世界坐标范围：x[-8.1, 4.5], y[-4.5, 4.5], z[0.0, 3.0]。
-  x_min: -8.1
+  # MPC 世界坐标范围：x[-8.2, 4.5], y[-4.5, 4.5], z[0.0, 3.0]。
+  x_min: -8.2
   x_max: 4.5
   y_min: -4.5
   y_max: 4.5
@@ -17,6 +17,9 @@ environment:
   z_max: 3.0
   default_z: 1.0
   clamp_predicted_position: true
+  # 发布给 EGO planner 的 PoseStamped 目标点前视距离。
+  # PositionCommand 仍使用 MPC 一步预测点；plan_point 使用当前点沿 MPC 速度方向前看该距离。
+  plan_point_lookahead_m: 1.0
   enemy_step_safety: 0.9
   origin_radius_xy: 2.5
   enemy_z_band_half: 3.2
