@@ -6,7 +6,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import yaml
@@ -29,6 +29,7 @@ ADAPTER_KEYS = {
     "output_topic",
     "plan_point_enabled",
     "plan_point_topic",
+    "plan_point_lookahead_m",
     "plan_point_frame_id",
     "output_role",
     "output_default_height",
@@ -236,6 +237,66 @@ def _topic_to_position_cmd_topic(topic: str) -> str:
     return ""
 
 
+def _clamp_world_xy_to_bounds(
+    position_world: np.ndarray,
+    x_bounds: Optional[Tuple[float, float]],
+    y_bounds: Optional[Tuple[float, float]],
+) -> np.ndarray:
+    out = position_world.astype(np.float32).copy()
+    if x_bounds is not None:
+        out[0] = float(np.clip(out[0], x_bounds[0], x_bounds[1]))
+    if y_bounds is not None:
+        out[1] = float(np.clip(out[1], y_bounds[0], y_bounds[1]))
+    return out
+
+
+def _build_lookahead_plan_point_world(
+    current_position_world: np.ndarray,
+    predicted_position_world: np.ndarray,
+    velocity_world: np.ndarray,
+    *,
+    lookahead_m: float,
+    output_height: float,
+    x_bounds: Optional[Tuple[float, float]],
+    y_bounds: Optional[Tuple[float, float]],
+) -> np.ndarray:
+    if lookahead_m <= 0.0:
+        plan_point_world = predicted_position_world.astype(np.float32).copy()
+        plan_point_world[2] = float(output_height)
+        return _clamp_world_xy_to_bounds(plan_point_world, x_bounds, y_bounds)
+
+    direction_xy = velocity_world[:2].astype(np.float32)
+    norm_xy = float(np.linalg.norm(direction_xy))
+    if norm_xy <= 1e-6:
+        direction_xy = (predicted_position_world[:2] - current_position_world[:2]).astype(np.float32)
+        norm_xy = float(np.linalg.norm(direction_xy))
+
+    if norm_xy <= 1e-6:
+        plan_point_world = predicted_position_world.astype(np.float32).copy()
+    else:
+        plan_point_world = current_position_world.astype(np.float32).copy()
+        plan_point_world[:2] += direction_xy / norm_xy * float(lookahead_m)
+    plan_point_world[2] = float(output_height)
+    return _clamp_world_xy_to_bounds(plan_point_world, x_bounds, y_bounds)
+
+
+def _format_world_positions(positions: Mapping[str, np.ndarray]) -> str:
+    parts: List[str] = []
+    for role in ALL_ROLES:
+        position = positions.get(role)
+        if position is None:
+            continue
+        parts.append(
+            "{}=[{:.3f},{:.3f},{:.3f}]".format(
+                role,
+                float(position[0]),
+                float(position[1]),
+                float(position[2]),
+            )
+        )
+    return " ".join(parts) if parts else "<none>"
+
+
 class AdvRosAdapter:
     def __init__(self, model_config_path: str = DEFAULT_MODEL_CONFIG_PATH):
         import rospy
@@ -291,6 +352,8 @@ class AdvRosAdapter:
         )
         self.engine = InferenceEngine(config_path=inference_config_path)
 
+        self.publish_rate_hz = float(self.adapter_config.get("publish_rate_hz", 20.0))
+        self.started_at_sec = float(rospy.Time.now().to_sec())
         self.command_position_dt = float(self.adapter_config.get("command_position_dt", 0.1))
         self.stale_timeout_sec = float(self.adapter_config.get("stale_timeout_sec", 0.5))
         self.estimate_velocity = bool(self.adapter_config.get("estimate_velocity_from_position", True))
@@ -313,6 +376,10 @@ class AdvRosAdapter:
         )
         self.plan_point_topic = str(
             rospy.get_param("~plan_point_topic", self.adapter_config.get("plan_point_topic", "/toplan/single_plan_point"))
+        )
+        self.plan_point_lookahead_m = max(
+            0.0,
+            float(rospy.get_param("~plan_point_lookahead_m", self.adapter_config.get("plan_point_lookahead_m", 1.0))),
         )
         self.plan_point_frame_id = str(
             rospy.get_param("~plan_point_frame_id", self.adapter_config.get("plan_point_frame_id", self.output_frame_id))
@@ -428,10 +495,11 @@ class AdvRosAdapter:
             if self.plan_point_frame_id != self.output_frame_id:
                 self.rospy.logwarn(
                     "plan_point_frame_id (%s) 与 output_frame_id (%s) 不一致；"
-                    "plan_point 复用 PositionCommand 坐标，通常应保持一致",
+                    "plan_point 使用 ADV 前视点坐标，通常应保持一致",
                     self.plan_point_frame_id,
                     self.output_frame_id,
                 )
+            self.rospy.loginfo("plan point lookahead: %.3fm", self.plan_point_lookahead_m)
 
         for role in ALL_ROLES:
             topic, msg_type = self.input_descriptions.get(role, ("", "defaults.states"))
@@ -561,6 +629,14 @@ class AdvRosAdapter:
         if missing:
             rospy.logwarn("inputs 缺少这些角色，将使用 defaults.states: %s", missing)
         return subscribers
+
+    def _runtime_sec(self, now_sec: Optional[float] = None) -> float:
+        if now_sec is None:
+            now_sec = float(self.rospy.Time.now().to_sec())
+        return max(0.0, float(now_sec) - float(self.started_at_sec))
+
+    def _step_count(self, now_sec: Optional[float] = None) -> int:
+        return int(self._runtime_sec(now_sec) * self.publish_rate_hz)
 
     def _build_terminal_command_topics(self, output_topic: str) -> Dict[str, str]:
         topics: Dict[str, str] = {}
@@ -703,7 +779,7 @@ class AdvRosAdapter:
         return InferenceSnapshot(
             defenders=defenders,
             enemy=VehicleState(position=enemy_state.position, velocity=enemy_state.velocity),
-            step_count=int(self.rospy.get_time() * float(self.adapter_config.get("publish_rate_hz", 20.0))),
+            step_count=self._step_count(now_sec),
             active_defender_indices=tuple(DEFENDER_ROLES.index(role) for role in self.active_defender_roles),
         )
 
@@ -792,12 +868,26 @@ class AdvRosAdapter:
 
         plan_point = None
         if self.plan_point_enabled:
+            plan_point_world = _build_lookahead_plan_point_world(
+                defender_state.position,
+                target_position_world,
+                target_velocity_world,
+                lookahead_m=self.plan_point_lookahead_m,
+                output_height=self.output_default_height,
+                x_bounds=self.game_end_monitor.config.x_bounds,
+                y_bounds=self.game_end_monitor.config.y_bounds,
+            )
+            plan_point_position, _ = self._convert_world_command_for_role(
+                self.output_role,
+                plan_point_world,
+                target_velocity_world,
+            )
             plan_point = self.PoseStamped()
             plan_point.header.stamp = msg.header.stamp
             plan_point.header.frame_id = self.plan_point_frame_id
-            plan_point.pose.position.x = msg.position.x
-            plan_point.pose.position.y = msg.position.y
-            plan_point.pose.position.z = msg.position.z
+            plan_point.pose.position.x = float(plan_point_position[0])
+            plan_point.pose.position.y = float(plan_point_position[1])
+            plan_point.pose.position.z = float(plan_point_position[2])
             plan_point.pose.orientation.w = 1.0
 
         return msg, plan_point
@@ -834,21 +924,28 @@ class AdvRosAdapter:
             published_roles.append(role)
 
         self.game_end_hover_published = True
+        world_positions = self._received_world_positions(now_sec)
+        runtime_sec = self._runtime_sec(now_sec)
+        step_count = self._step_count(now_sec)
         self.rospy.logwarn(
             "ADV game ended: outcome=%s reason=%s trigger_roles=%s trigger_distance=%s. "
+            "node_role=%s runtime=%.3fs step_count=%d world_positions=%s. "
             "Published terminal hover for roles=%s",
             status.outcome,
             status.reason,
             list(status.trigger_roles),
             "n/a" if status.trigger_distance_m is None else f"{status.trigger_distance_m:.3f}",
+            self.output_role,
+            runtime_sec,
+            step_count,
+            _format_world_positions(world_positions),
             published_roles,
         )
         if missing_roles:
             self.rospy.logwarn("terminal hover skipped roles without publisher or received state: %s", missing_roles)
 
     def spin(self) -> None:
-        rate_hz = float(self.adapter_config.get("publish_rate_hz", 20.0))
-        rate = self.rospy.Rate(rate_hz)
+        rate = self.rospy.Rate(self.publish_rate_hz)
         while not self.rospy.is_shutdown():
             try:
                 game_end_status = self.update_game_end()

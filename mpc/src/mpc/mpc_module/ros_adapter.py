@@ -6,7 +6,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import yaml
@@ -278,6 +278,23 @@ def _build_lookahead_plan_point_world(
     return _clamp_world_xy_to_environment(plan_point_world, environment)
 
 
+def _format_world_positions(positions: Mapping[str, np.ndarray]) -> str:
+    parts: List[str] = []
+    for role in ALL_ROLES:
+        position = positions.get(role)
+        if position is None:
+            continue
+        parts.append(
+            "{}=[{:.3f},{:.3f},{:.3f}]".format(
+                role,
+                float(position[0]),
+                float(position[1]),
+                float(position[2]),
+            )
+        )
+    return " ".join(parts) if parts else "<none>"
+
+
 class MpcRosAdapter:
     def __init__(self, model_config_path: str = DEFAULT_MODEL_CONFIG_PATH):
         import rospy
@@ -315,6 +332,7 @@ class MpcRosAdapter:
         self.output_default_height = float(self.adapter_config.get("output_default_height", 1.0))
         self.output_velocity_z = float(self.adapter_config.get("output_velocity_z", 0.0))
         self.publish_rate_hz = float(self.adapter_config.get("publish_rate_hz", 20.0))
+        self.started_at_sec = float(rospy.Time.now().to_sec())
         self.stale_timeout_sec = float(self.adapter_config.get("stale_timeout_sec", 0.5))
         self.position_command_config = _section(self.model_config, "position_command")
         _reject_unknown_keys(self.position_command_config, POSITION_COMMAND_KEYS, path="position_command")
@@ -628,6 +646,14 @@ class MpcRosAdapter:
         self.rospy.loginfo("auto role mapping self=%s fleet=%s topics=%s", self_uav, fleet_uavs, role_topics)
         return role_topics
 
+    def _runtime_sec(self, now_sec: Optional[float] = None) -> float:
+        if now_sec is None:
+            now_sec = float(self.rospy.Time.now().to_sec())
+        return max(0.0, float(now_sec) - float(self.started_at_sec))
+
+    def _step_count(self, now_sec: Optional[float] = None) -> int:
+        return int(self._runtime_sec(now_sec) * self.publish_rate_hz)
+
     def _make_typed_callback(self, role: str, kind: str):
         def callback(msg: Any) -> None:
             self._update_state(role, msg, kind)
@@ -684,7 +710,7 @@ class MpcRosAdapter:
         return MpcSnapshot(
             enemy=VehicleState(position=enemy_state.position, velocity=enemy_state.velocity),
             defenders=defenders,
-            step_count=int(self.rospy.get_time() * self.publish_rate_hz),
+            step_count=self._step_count(now_sec),
         )
 
     def _received_world_positions(self, now_sec: float) -> Dict[str, np.ndarray]:
@@ -826,13 +852,21 @@ class MpcRosAdapter:
             published_roles.append(role)
 
         self.game_end_hover_published = True
+        world_positions = self._received_world_positions(now_sec)
+        runtime_sec = self._runtime_sec(now_sec)
+        step_count = self._step_count(now_sec)
         self.rospy.logwarn(
             "MPC game ended: outcome=%s reason=%s trigger_roles=%s trigger_distance=%s. "
+            "node_role=%s runtime=%.3fs step_count=%d world_positions=%s. "
             "Published terminal hover for roles=%s",
             status.outcome,
             status.reason,
             list(status.trigger_roles),
             "n/a" if status.trigger_distance_m is None else f"{status.trigger_distance_m:.3f}",
+            self.output_role,
+            runtime_sec,
+            step_count,
+            _format_world_positions(world_positions),
             published_roles,
         )
         if missing_roles:
