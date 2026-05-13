@@ -1,0 +1,120 @@
+<launch>
+  <arg name="start_monitor" default="true"/>
+  <arg name="start_rviz" default="false"/>
+  <arg name="ground_ip" default="20.0.0.172"/>
+  <arg name="ground_master_uri" default="http://20.0.0.172:11311"/>
+
+  <node pkg="fkie_master_discovery"
+        type="master_discovery"
+        name="ground_master_discovery"
+        output="screen"
+        respawn="true"
+        respawn_delay="2.0">
+    <env name="ROS_MASTER_URI" value="$(arg ground_master_uri)"/>
+    <env name="ROS_IP" value="$(arg ground_ip)"/>
+    <env name="ROS_HOSTNAME" value="$(arg ground_ip)"/>
+  </node>
+
+  <node pkg="fkie_master_sync"
+        type="master_sync"
+        name="ground_master_sync"
+        output="screen"
+        respawn="true"
+        respawn_delay="2.0">
+    <env name="ROS_MASTER_URI" value="$(arg ground_master_uri)"/>
+    <env name="ROS_IP" value="$(arg ground_ip)"/>
+    <env name="ROS_HOSTNAME" value="$(arg ground_ip)"/>
+
+    <rosparam param="sync_topics">
+      [
+      '/uav0/vins_position',
+      '/uav1/vins_position',
+      '/uav2/vins_position',
+      '/uav0/vins_fusion/imu_propagate',
+      '/uav1/vins_fusion/imu_propagate',
+      '/uav2/vins_fusion/imu_propagate',
+      '/uav0/vins_fusion/path',
+      '/uav1/vins_fusion/path',
+      '/uav2/vins_fusion/path',
+      '/uav0/position_cmd',
+      '/uav1/position_cmd',
+      '/uav2/position_cmd',
+      '/uav0/current_yaw_deg',
+      '/uav1/current_yaw_deg',
+      '/uav2/current_yaw_deg',
+      '/uav0/debugPx4ctrl',
+      '/uav1/debugPx4ctrl',
+      '/uav2/debugPx4ctrl',
+      '/uav0/toplan/waypoint_done',
+      '/uav1/toplan/waypoint_done',
+      '/uav2/toplan/waypoint_done',
+      '/uav0/toplan/single_plan_point',
+      '/uav1/toplan/single_plan_point',
+      '/uav2/toplan/single_plan_point',
+      '/uav0/toplan/yaw_deg',
+      '/uav1/toplan/yaw_deg',
+      '/uav2/toplan/yaw_deg',
+      '/uav0/px4ctrl/takeoff_land',
+      '/uav1/px4ctrl/takeoff_land',
+      '/uav2/px4ctrl/takeoff_land',
+      '/uav0/px4ctrl/hover_yaw_cmd',
+      '/uav1/px4ctrl/hover_yaw_cmd',
+      '/uav2/px4ctrl/hover_yaw_cmd',
+      '/uav0/drone_0_ego_planner_node/goal_point',
+      '/uav1/drone_0_ego_planner_node/goal_point',
+      '/uav2/drone_0_ego_planner_node/goal_point',
+      '/uav0/drone_0_ego_planner_node/optimal_list',
+      '/uav1/drone_0_ego_planner_node/optimal_list',
+      '/uav2/drone_0_ego_planner_node/optimal_list',
+      '/uav0/drone_0_ego_planner_node/init_list',
+      '/uav1/drone_0_ego_planner_node/init_list',
+      '/uav2/drone_0_ego_planner_node/init_list',
+      '/uav0/drone_0_ego_planner_node/grid_map/occupancy_inflate',
+      '/uav1/drone_0_ego_planner_node/grid_map/occupancy_inflate',
+      '/uav2/drone_0_ego_planner_node/grid_map/occupancy_inflate',
+      '/uav0/drone_0_odom_visualization/path',
+      '/uav1/drone_0_odom_visualization/path',
+      '/uav2/drone_0_odom_visualization/path',
+      '/uav0/drone_0_odom_visualization/robot',
+      '/uav1/drone_0_odom_visualization/robot',
+      '/uav2/drone_0_odom_visualization/robot',
+      '/uav0/mavros/state',
+      '/uav1/mavros/state',
+      '/uav2/mavros/state'
+      ]
+    </rosparam>
+
+    <rosparam param="ignore_services">
+      [
+      '/.*'
+      ]
+    </rosparam>
+
+    <param name="sync_topics_on_demand" value="false"/>
+    <param name="check_host" value="false"/>
+  </node>
+
+  <node if="$(arg start_monitor)"
+        pkg="groundctrl"
+        type="ground_state_monitor.py"
+        name="ground_state_monitor"
+        output="screen"
+        respawn="true"
+        respawn_delay="2.0">
+    <env name="ROS_MASTER_URI" value="$(arg ground_master_uri)"/>
+    <env name="ROS_IP" value="$(arg ground_ip)"/>
+    <env name="ROS_HOSTNAME" value="$(arg ground_ip)"/>
+    <param name="config_file" value="$(find groundctrl)/config/groundctrl.yaml"/>
+  </node>
+
+  <node if="$(arg start_rviz)"
+        pkg="rviz"
+        type="rviz"
+        name="ground_rviz"
+        args="-d $(find groundctrl)/config/ground.rviz"
+        output="screen">
+    <env name="ROS_MASTER_URI" value="$(arg ground_master_uri)"/>
+    <env name="ROS_IP" value="$(arg ground_ip)"/>
+    <env name="ROS_HOSTNAME" value="$(arg ground_ip)"/>
+  </node>
+</launch>

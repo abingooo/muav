@@ -1,0 +1,92 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Reference Frame: world
+    - Class: rviz/Path
+      Color: 25; 120; 230
+      Enabled: true
+      Name: uav0_odom_path
+      Topic: /groundctrl/uav0/odom_path
+    - Class: rviz/Path
+      Color: 25; 180; 80
+      Enabled: true
+      Name: uav1_odom_path
+      Topic: /groundctrl/uav1/odom_path
+    - Class: rviz/Path
+      Color: 230; 120; 25
+      Enabled: true
+      Name: uav2_odom_path
+      Topic: /groundctrl/uav2/odom_path
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav0/drone_0_ego_planner_node/goal_point
+      Name: uav0_goal_point
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav1/drone_0_ego_planner_node/goal_point
+      Name: uav1_goal_point
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav2/drone_0_ego_planner_node/goal_point
+      Name: uav2_goal_point
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav0/drone_0_ego_planner_node/optimal_list
+      Name: uav0_optimal_list
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav1/drone_0_ego_planner_node/optimal_list
+      Name: uav1_optimal_list
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav2/drone_0_ego_planner_node/optimal_list
+      Name: uav2_optimal_list
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav0/drone_0_ego_planner_node/grid_map/occupancy_inflate
+      Name: uav0_occupancy
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav1/drone_0_ego_planner_node/grid_map/occupancy_inflate
+      Name: uav1_occupancy
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /uav2/drone_0_ego_planner_node/grid_map/occupancy_inflate
+      Name: uav2_occupancy
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/SetInitialPose
+    - Class: rviz/SetGoal
+  Value: true
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 18
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Name: Current View
+      Pitch: 0.7
+      Target Frame: world
+      Yaw: 0.78
+Window Geometry:
+  Height: 900
+  Width: 1400

@@ -1,0 +1,46 @@
+ground:
+  host: ground
+  ip: 20.0.0.172
+  project: /home/abin/Desktop/uav_project/muav
+  ros_master_uri: http://20.0.0.172:11311
+
+uavs:
+  uav0:
+    id: 0
+    ip: 20.0.0.188
+    ssh_host: uav0
+    project: /home/uav/Desktop/uav_project/muav
+    ros_master_uri: http://20.0.0.188:11311
+  uav1:
+    id: 1
+    ip: 20.0.0.187
+    ssh_host: uav1
+    project: /home/uav/Desktop/uav_project/muav
+    ros_master_uri: http://20.0.0.187:11311
+  uav2:
+    id: 2
+    ip: 20.0.0.208
+    ssh_host: uav2
+    project: /home/uav/Desktop/uav_project/muav
+    ros_master_uri: http://20.0.0.208:11311
+
+topics:
+  odom: /{uav}/vins_fusion/imu_propagate
+  vins_position: /{uav}/vins_position
+  ego_goal: /{uav}/toplan/single_plan_point
+  ego_yaw: /{uav}/toplan/yaw_deg
+  ego_done: /{uav}/toplan/waypoint_done
+  px4_position_cmd: /{uav}/position_cmd
+  px4_takeoff_land: /{uav}/px4ctrl/takeoff_land
+  px4_hover_yaw: /{uav}/px4ctrl/hover_yaw_cmd
+  current_yaw: /{uav}/current_yaw_deg
+  mavros_state: /{uav}/mavros/state
+  px4_debug: /{uav}/debugPx4ctrl
+
+runtime:
+  command_rate_hz: 20.0
+  reached_tolerance_m: 0.30
+  reached_hold_s: 0.30
+  command_timeout_s: 60.0
+  remote_log_dir: logs/groundctrl
+  set_ros_namespace_on_remote_start: true

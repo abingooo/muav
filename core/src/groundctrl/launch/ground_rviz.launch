@@ -1,0 +1,21 @@
+<launch>
+  <arg name="start_sync" default="true"/>
+  <arg name="ground_ip" default="20.0.0.172"/>
+  <arg name="ground_master_uri" default="http://20.0.0.172:11311"/>
+  <include if="$(arg start_sync)" file="$(find groundctrl)/launch/ground_sync.launch">
+    <arg name="start_monitor" value="true"/>
+    <arg name="start_rviz" value="false"/>
+    <arg name="ground_ip" value="$(arg ground_ip)"/>
+    <arg name="ground_master_uri" value="$(arg ground_master_uri)"/>
+  </include>
+
+  <node pkg="rviz"
+        type="rviz"
+        name="ground_rviz"
+        args="-d $(find groundctrl)/config/ground.rviz"
+        output="screen">
+    <env name="ROS_MASTER_URI" value="$(arg ground_master_uri)"/>
+    <env name="ROS_IP" value="$(arg ground_ip)"/>
+    <env name="ROS_HOSTNAME" value="$(arg ground_ip)"/>
+  </node>
+</launch>
