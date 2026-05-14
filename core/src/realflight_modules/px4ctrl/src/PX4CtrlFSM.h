@@ -20,6 +20,8 @@ struct AutoTakeoffLand_t
 	ros::Time toggle_takeoff_land_time;
 	std::pair<bool, ros::Time> delay_trigger{std::pair<bool, ros::Time>(false, ros::Time(0))};
 	Eigen::Vector4d start_pose;
+	Eigen::Vector4d px4_start_pose;
+	bool px4_start_pose_valid{false};
 	
 	static constexpr double MOTORS_SPEEDUP_TIME = 3.0; // motors idle running for 3 seconds before takeoff
 	static constexpr double DELAY_TRIGGER_TIME = 2.0;  // Time to be delayed when reach at target height
@@ -28,21 +30,24 @@ struct AutoTakeoffLand_t
 class PX4CtrlFSM
 {
 public:
-	Parameter_t &param;
+		Parameter_t &param;
 
-	RC_Data_t rc_data;
-	State_Data_t state_data;
-	ExtendedState_Data_t extended_state_data;
-	Odom_Data_t odom_data;
-	Imu_Data_t imu_data;
-	Command_Data_t cmd_data;
-	Battery_Data_t bat_data;
-	Takeoff_Land_Data_t takeoff_land_data;
+		RC_Data_t rc_data;
+		State_Data_t state_data;
+		ExtendedState_Data_t extended_state_data;
+		LocalPose_Data_t local_pose_data;
+		StatusText_Data_t status_text_data;
+		Odom_Data_t odom_data;
+		Imu_Data_t imu_data;
+		Command_Data_t cmd_data;
+		Battery_Data_t bat_data;
+		Takeoff_Land_Data_t takeoff_land_data;
 
 	LinearControl &controller;
 
 	ros::Publisher traj_start_trigger_pub;
 	ros::Publisher ctrl_FCU_pub;
+	ros::Publisher local_pos_sp_pub;
 	ros::Publisher debug_pub; //debug
 	ros::ServiceClient set_FCU_mode_srv;
 	ros::ServiceClient arming_client_srv;
@@ -64,13 +69,14 @@ public:
 
 	PX4CtrlFSM(Parameter_t &, LinearControl &);
 	void process();
-	bool rc_is_received(const ros::Time &now_time);
-	bool cmd_is_received(const ros::Time &now_time);
-	bool odom_is_received(const ros::Time &now_time);
-	bool imu_is_received(const ros::Time &now_time);
-	bool bat_is_received(const ros::Time &now_time);
-	bool recv_new_odom();
-	void hover_yaw_cmd_cb(const std_msgs::Float64ConstPtr &msg);
+		bool rc_is_received(const ros::Time &now_time);
+		bool cmd_is_received(const ros::Time &now_time);
+		bool odom_is_received(const ros::Time &now_time);
+		bool imu_is_received(const ros::Time &now_time);
+		bool bat_is_received(const ros::Time &now_time);
+		bool local_pose_is_received(const ros::Time &now_time);
+		bool recv_new_odom();
+		void hover_yaw_cmd_cb(const std_msgs::Float64ConstPtr &msg);
 	State_t get_state() { return state; }
 	bool get_landed() { return takeoff_land.landed; }
 
@@ -92,14 +98,17 @@ private:
 	void set_start_pose_for_takeoff_land(const Odom_Data_t &odom);
 	Desired_State_t get_rotor_speed_up_des(const ros::Time now);
 	Desired_State_t get_takeoff_land_des(const double speed);
+	void publish_takeoff_position_setpoint(const ros::Time &stamp);
 
-	// ---- tools ----
-	void set_hov_with_odom();
-	void set_hov_with_rc();
+		// ---- tools ----
+		void set_hov_with_odom();
+		void set_hov_with_rc();
 
-	bool toggle_offboard_mode(bool on_off); // It will only try to toggle once, so not blocked.
-	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
-	void reboot_FCU();
+		bool toggle_offboard_mode(bool on_off, bool remember_current_mode = true); // It will only try to toggle once, so not blocked.
+		bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
+		bool check_takeoff_local_pose_consistency(const ros::Time &now_time);
+		void log_latest_px4_status_text(const ros::Time &now_time);
+		void reboot_FCU();
 
 	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
 	void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);

@@ -48,21 +48,27 @@ public:
 		bool throttle;
 	};
 
-	struct AutoTakeoffLand
-	{
-		bool enable;
-		bool enable_auto_arm;
-		bool no_RC;
-		double height;
-		double speed;
+		struct AutoTakeoffLand
+		{
+			bool enable;
+			bool enable_auto_arm;
+			bool no_RC;
+			double height;
+			double speed;
+			double setpoint_extra_height;
+			bool use_current_px4_xy;
+			bool check_px4_local_pose;
+			double px4_local_pose_timeout;
+			double px4_local_pose_max_xy_error;
+			double px4_local_pose_max_z_error;
 
-		// 0: keep old behavior (use current odom at takeoff finish)
-		// 1: use start_pose + offsets
-		int hover_after_takeoff_mode;
-		double hover_offset_x;
-		double hover_offset_y;
-		double hover_offset_z;   // optional extra z offset
-		double hover_offset_yaw; // rad
+			// 0: keep old behavior (use current odom at takeoff finish)
+			// 1: use start_pose + offsets
+			int hover_after_takeoff_mode;
+			double hover_offset_x;
+			double hover_offset_y;
+			double hover_offset_z;   // optional extra z offset
+			double hover_offset_yaw; // rad
 	};
 
 	struct HoverYawCmd

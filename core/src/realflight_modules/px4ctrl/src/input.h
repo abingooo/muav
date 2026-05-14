@@ -4,12 +4,14 @@
 #include <ros/ros.h>
 #include <Eigen/Dense>
 
+#include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/Imu.h>
 #include <quadrotor_msgs/PositionCommand.h>
 #include <quadrotor_msgs/TakeoffLand.h>
 #include <mavros_msgs/RCIn.h>
 #include <mavros_msgs/State.h>
 #include <mavros_msgs/ExtendedState.h>
+#include <mavros_msgs/StatusText.h>
 #include <sensor_msgs/BatteryState.h>
 #include <uav_utils/utils.h>
 #include "PX4CtrlParam.h"
@@ -97,6 +99,30 @@ public:
 
   ExtendedState_Data_t();
   void feed(mavros_msgs::ExtendedStateConstPtr pMsg);
+};
+
+class LocalPose_Data_t
+{
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  Eigen::Vector3d p;
+  Eigen::Quaterniond q;
+
+  geometry_msgs::PoseStamped msg;
+  ros::Time rcv_stamp;
+
+  LocalPose_Data_t();
+  void feed(geometry_msgs::PoseStampedConstPtr pMsg);
+};
+
+class StatusText_Data_t
+{
+public:
+  mavros_msgs::StatusText msg;
+  ros::Time rcv_stamp;
+
+  StatusText_Data_t();
+  void feed(mavros_msgs::StatusTextConstPtr pMsg);
 };
 
 class Command_Data_t

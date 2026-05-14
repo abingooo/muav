@@ -41,6 +41,20 @@ int main(int argc, char *argv[])
                                                  10,
                                                  boost::bind(&ExtendedState_Data_t::feed, &fsm.extended_state_data, _1));
 
+    ros::Subscriber local_pose_sub =
+        nh.subscribe<geometry_msgs::PoseStamped>(nsTopic("mavros/local_position/pose"),
+                                                 100,
+                                                 boost::bind(&LocalPose_Data_t::feed, &fsm.local_pose_data, _1),
+                                                 ros::VoidConstPtr(),
+                                                 ros::TransportHints().tcpNoDelay());
+
+    ros::Subscriber status_text_sub =
+        nh.subscribe<mavros_msgs::StatusText>(nsTopic("mavros/statustext/recv"),
+                                              50,
+                                              boost::bind(&StatusText_Data_t::feed, &fsm.status_text_data, _1),
+                                              ros::VoidConstPtr(),
+                                              ros::TransportHints().tcpNoDelay());
+
     ros::Subscriber odom_sub =
         nh.subscribe<nav_msgs::Odometry>("odom",
                                          100,
@@ -91,6 +105,7 @@ int main(int argc, char *argv[])
                                     &fsm);
 
     fsm.ctrl_FCU_pub = nh.advertise<mavros_msgs::AttitudeTarget>(nsTopic("mavros/setpoint_raw/attitude"), 10);
+    fsm.local_pos_sp_pub = nh.advertise<geometry_msgs::PoseStamped>(nsTopic("mavros/setpoint_position/local"), 10);
     fsm.traj_start_trigger_pub = nh.advertise<geometry_msgs::PoseStamped>(nsTopic("traj_start_trigger"), 10);
 
     fsm.debug_pub = nh.advertise<quadrotor_msgs::Px4ctrlDebug>(nsTopic("debugPx4ctrl"), 10); // debug

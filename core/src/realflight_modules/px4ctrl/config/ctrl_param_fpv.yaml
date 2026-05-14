@@ -23,6 +23,12 @@ auto_takeoff_land:
     no_RC: false
     takeoff_height: 0.5 # m
     takeoff_land_speed: 0.2 # m/s
+    takeoff_setpoint_extra_height: 0.10 # m, command PX4 takeoff setpoint slightly above the switch height
+    takeoff_use_current_px4_xy: true # during takeoff, track current PX4 local xy and only command z climb
+    check_px4_local_pose: true
+    px4_local_pose_timeout: 0.5 # s
+    px4_local_pose_max_xy_error: 0.5 # m
+    px4_local_pose_max_z_error: 0.3 # m
 
     # 0: old behavior, use current odom as hover point when takeoff finishes
     # 1: use start_pose + offsets

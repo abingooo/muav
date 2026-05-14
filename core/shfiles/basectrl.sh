@@ -1,5 +1,14 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+source /opt/ros/noetic/setup.bash
+source "${CORE_DIR}/devel/setup.bash"
+
 sudo chmod 777 /dev/ttyACM0 & sleep 1;
 export UAV_NAME=${UAV_NAME:-uav}
+export ROS_NAMESPACE=/${UAV_NAME}
 export TF_REMAP_ARGS="/tf:=tf /tf_static:=tf_static"
 export RS_TF_PREFIX=${RS_TF_PREFIX:-${UAV_NAME}_camera}
 # roslaunch realsense2_camera rs_camera.launch & sleep 10;

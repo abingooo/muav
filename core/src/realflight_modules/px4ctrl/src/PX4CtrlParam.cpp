@@ -45,10 +45,16 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "rc_reverse/throttle", rc_reverse.throttle);
 
 	read_essential_param(nh, "auto_takeoff_land/enable", takeoff_land.enable);
-    read_essential_param(nh, "auto_takeoff_land/enable_auto_arm", takeoff_land.enable_auto_arm);
-    read_essential_param(nh, "auto_takeoff_land/no_RC", takeoff_land.no_RC);
+	read_essential_param(nh, "auto_takeoff_land/enable_auto_arm", takeoff_land.enable_auto_arm);
+	read_essential_param(nh, "auto_takeoff_land/no_RC", takeoff_land.no_RC);
 	read_essential_param(nh, "auto_takeoff_land/takeoff_height", takeoff_land.height);
 	read_essential_param(nh, "auto_takeoff_land/takeoff_land_speed", takeoff_land.speed);
+	read_essential_param(nh, "auto_takeoff_land/takeoff_setpoint_extra_height", takeoff_land.setpoint_extra_height);
+	read_essential_param(nh, "auto_takeoff_land/takeoff_use_current_px4_xy", takeoff_land.use_current_px4_xy);
+	read_essential_param(nh, "auto_takeoff_land/check_px4_local_pose", takeoff_land.check_px4_local_pose);
+	read_essential_param(nh, "auto_takeoff_land/px4_local_pose_timeout", takeoff_land.px4_local_pose_timeout);
+	read_essential_param(nh, "auto_takeoff_land/px4_local_pose_max_xy_error", takeoff_land.px4_local_pose_max_xy_error);
+	read_essential_param(nh, "auto_takeoff_land/px4_local_pose_max_z_error", takeoff_land.px4_local_pose_max_z_error);
 
 	read_essential_param(nh, "auto_takeoff_land/hover_after_takeoff_mode", takeoff_land.hover_after_takeoff_mode);
 	read_essential_param(nh, "auto_takeoff_land/hover_offset_x", takeoff_land.hover_offset_x);

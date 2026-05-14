@@ -218,6 +218,55 @@ void ExtendedState_Data_t::feed(mavros_msgs::ExtendedStateConstPtr pMsg)
     current_extended_state = *pMsg;
 }
 
+LocalPose_Data_t::LocalPose_Data_t()
+{
+    rcv_stamp = ros::Time(0);
+    p.setZero();
+    q.setIdentity();
+}
+
+void LocalPose_Data_t::feed(geometry_msgs::PoseStampedConstPtr pMsg)
+{
+    msg = *pMsg;
+    rcv_stamp = ros::Time::now();
+
+    p(0) = msg.pose.position.x;
+    p(1) = msg.pose.position.y;
+    p(2) = msg.pose.position.z;
+
+    q.x() = msg.pose.orientation.x;
+    q.y() = msg.pose.orientation.y;
+    q.z() = msg.pose.orientation.z;
+    q.w() = msg.pose.orientation.w;
+}
+
+StatusText_Data_t::StatusText_Data_t()
+{
+    rcv_stamp = ros::Time(0);
+}
+
+void StatusText_Data_t::feed(mavros_msgs::StatusTextConstPtr pMsg)
+{
+    msg = *pMsg;
+    rcv_stamp = ros::Time::now();
+
+    if (msg.severity <= mavros_msgs::StatusText::ERROR)
+    {
+        ROS_ERROR("[px4ctrl] PX4 statustext severity=%u text=\"%s\"",
+                  msg.severity, msg.text.c_str());
+    }
+    else if (msg.severity <= mavros_msgs::StatusText::WARNING)
+    {
+        ROS_WARN("[px4ctrl] PX4 statustext severity=%u text=\"%s\"",
+                 msg.severity, msg.text.c_str());
+    }
+    else
+    {
+        ROS_INFO("[px4ctrl] PX4 statustext severity=%u text=\"%s\"",
+                 msg.severity, msg.text.c_str());
+    }
+}
+
 Command_Data_t::Command_Data_t()
 {
     rcv_stamp = ros::Time(0);
